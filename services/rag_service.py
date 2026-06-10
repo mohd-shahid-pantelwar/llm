@@ -15,7 +15,7 @@ def build_cache_key(query: str):
     return hashlib.md5(query.encode()).hexdigest()
 
 
-async def ask(query: str, top_k: int = 5):
+async def ask(query: str, top_k: int, model: str):
 
     cache_key = build_cache_key(query)
 
@@ -55,7 +55,8 @@ Question:
 """
 
     # 5. LLM call
-    answer = await llm.generate(prompt)
+    local_llm = LLMService(model=model)
+    answer = await local_llm.generate(prompt)
 
     result = {
         "query": query,

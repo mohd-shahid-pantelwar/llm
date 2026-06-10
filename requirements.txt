@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+redis
+rq
+psycopg2-binary
+minio
+httpx
+numpy
+requests
+pydantic
+python-multipart
+sentence-transformers

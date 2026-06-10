@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from routers import chat, upload, ws_chat, health, models
+from routers import chat, upload, ws_chat, health, models, auth, users
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -8,8 +8,6 @@ app = FastAPI(
     version="1.0.0"
 )
 
-app = FastAPI()
-
 
 # Register routers
 app.include_router(chat.router)
@@ -17,6 +15,8 @@ app.include_router(upload.router)
 app.include_router(ws_chat.router)
 app.include_router(health.router)
 app.include_router(models.router)
+app.include_router(auth.router)
+app.include_router(users.router)
 
 app.add_middleware(
     CORSMiddleware,
