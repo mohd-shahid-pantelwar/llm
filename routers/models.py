@@ -5,6 +5,7 @@ import requests
 import time
 import json
 from database.db import get_conn
+from routers.users import get_current_user
 
 router = APIRouter(prefix="/api")
 
@@ -71,7 +72,8 @@ def get_models():
     return mapped_models
 
 @router.post("/models/preset")
-def create_model_preset(preset: PresetData):
+def create_model_preset(preset: PresetData, current_user: dict = Depends(get_current_user)):
+    user_id = current_user.get("id")
     try:
         model_id = preset.id
         if not model_id:
@@ -91,37 +93,83 @@ def create_model_preset(preset: PresetData):
         conn = get_conn()
         cur = conn.cursor()
         
-        # Check if exists
-        cur.execute("SELECT id FROM models WHERE id = %s", (model_id,))
-        if cur.fetchone():
-            cur.execute("""
-                UPDATE models 
-                SET name = %s, meta = %s, updated_at = %s 
-                WHERE id = %s
-            """, (preset.name, meta, now, model_id))
+        # Check if the model already exists globally
+        cur.execute("SELECT user_id FROM models WHERE id = %s", (model_id,))
+        row = cur.fetchone()
+        if row:
+            existing_user_id = row[0]
+            # If the model has no owner or belongs to this user, allow updating it
+            if existing_user_id is None or existing_user_id == user_id:
+                cur.execute("""
+                    UPDATE models 
+                    SET name = %s, meta = %s, updated_at = %s, user_id = %s 
+                    WHERE id = %s
+                """, (preset.name, meta, now, user_id, model_id))
+            else:
+                cur.close()
+                conn.close()
+                raise HTTPException(status_code=403, detail="A model preset with this ID already exists and is owned by another user.")
         else:
             cur.execute("""
-                INSERT INTO models (id, name, meta, updated_at, created_at, is_active)
-                VALUES (%s, %s, %s, %s, %s, true)
-            """, (model_id, preset.name, meta, now, now))
+                INSERT INTO models (id, user_id, name, meta, updated_at, created_at, is_active)
+                VALUES (%s, %s, %s, %s, %s, %s, true)
+            """, (model_id, user_id, preset.name, meta, now, now))
             
         conn.commit()
         cur.close()
         conn.close()
         
         return {"status": "success", "id": model_id}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/models/preset/{model_id}")
-def delete_model_preset(model_id: str):
+def delete_model_preset(model_id: str, current_user: dict = Depends(get_current_user)):
+    user_id = current_user.get("id")
     try:
         conn = get_conn()
         cur = conn.cursor()
-        cur.execute("DELETE FROM models WHERE id = %s", (model_id,))
+        # Only delete models owned by this user or with no owner
+        cur.execute("DELETE FROM models WHERE id = %s AND (user_id = %s OR user_id IS NULL)", (model_id, user_id))
         conn.commit()
         cur.close()
         conn.close()
         return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.patch("/models/preset/{model_id}/toggle")
+def toggle_model_active(model_id: str, current_user: dict = Depends(get_current_user)):
+    """Toggle is_active for a model preset and persist to DB."""
+    user_id = current_user.get("id")
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT is_active, user_id FROM models WHERE id = %s", (model_id,))
+        row = cur.fetchone()
+        if not row:
+            cur.close()
+            conn.close()
+            raise HTTPException(status_code=404, detail="Model not found")
+        
+        is_active, existing_user_id = row[0], row[1]
+        if existing_user_id is not None and existing_user_id != user_id:
+            cur.close()
+            conn.close()
+            raise HTTPException(status_code=403, detail="Not authorized to modify this model preset")
+
+        new_active = not is_active
+        cur.execute(
+            "UPDATE models SET is_active = %s, updated_at = %s WHERE id = %s",
+            (new_active, int(time.time()), model_id)
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        return {"status": "success", "is_active": new_active}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

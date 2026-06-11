@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from routers import chat, upload, ws_chat, health, models, auth, users
+from routers import chat, upload, ws_chat, health, models, auth, users, chats, folders, workspace
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -17,6 +17,9 @@ app.include_router(health.router)
 app.include_router(models.router)
 app.include_router(auth.router)
 app.include_router(users.router)
+app.include_router(chats.router)
+app.include_router(folders.router)
+app.include_router(workspace.router)
 
 app.add_middleware(
     CORSMiddleware,

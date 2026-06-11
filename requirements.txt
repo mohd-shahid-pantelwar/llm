@@ -10,3 +10,6 @@ requests
 pydantic
 python-multipart
 sentence-transformers
+passlib
+bcrypt==4.3.0
+PyJWT

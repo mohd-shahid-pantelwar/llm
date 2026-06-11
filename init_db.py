@@ -29,6 +29,77 @@ def init_db():
         );
     """)
 
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS folders (
+            id VARCHAR(255) PRIMARY KEY,
+            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            name VARCHAR(255) NOT NULL,
+            background_image VARCHAR(255),
+            system_prompt TEXT,
+            knowledge TEXT,
+            created_at BIGINT
+        );
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS chats (
+            id VARCHAR(255) PRIMARY KEY,
+            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            title VARCHAR(255) NOT NULL,
+            model_id VARCHAR(255) NOT NULL,
+            messages JSONB NOT NULL DEFAULT '[]'::jsonb,
+            is_archived BOOLEAN DEFAULT false,
+            pinned BOOLEAN DEFAULT false,
+            folder_id VARCHAR(255) REFERENCES folders(id) ON DELETE SET NULL,
+            updated_at BIGINT,
+            created_at BIGINT
+        );
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS prompts (
+            id VARCHAR(255) PRIMARY KEY,
+            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            title VARCHAR(255) NOT NULL,
+            description TEXT,
+            content TEXT,
+            created_at BIGINT
+        );
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS skills (
+            id VARCHAR(255) PRIMARY KEY,
+            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            title VARCHAR(255) NOT NULL,
+            description TEXT,
+            content TEXT,
+            created_at BIGINT
+        );
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS tools (
+            id VARCHAR(255) PRIMARY KEY,
+            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            title VARCHAR(255) NOT NULL,
+            description TEXT,
+            content TEXT,
+            created_at BIGINT
+        );
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS knowledge (
+            id VARCHAR(255) PRIMARY KEY,
+            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            title VARCHAR(255) NOT NULL,
+            description TEXT,
+            content TEXT,
+            created_at BIGINT
+        );
+    """)
+
     # Insert a default admin user if none exists
     cur.execute("SELECT COUNT(*) FROM users")
     if cur.fetchone()[0] == 0:

@@ -28,6 +28,12 @@ class UserCreate(BaseModel):
     password: str
     role: str = "user"
 
+class UserUpdate(BaseModel):
+    name: str
+    email: str
+    role: str
+    password: str = None
+
 @router.get("/")
 async def get_users(admin: dict = Depends(get_admin_user)):
     conn = get_conn()
@@ -75,3 +81,39 @@ async def delete_user(user_id: int, admin: dict = Depends(get_admin_user)):
     cur.close()
     conn.close()
     return {"message": "User deleted"}
+
+@router.put("/{user_id}")
+async def update_user(user_id: int, user: UserUpdate, admin: dict = Depends(get_admin_user)):
+    conn = get_conn()
+    cur = conn.cursor()
+    
+    # Check if user exists
+    cur.execute("SELECT id FROM users WHERE id = %s", (user_id,))
+    if not cur.fetchone():
+        cur.close()
+        conn.close()
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    # Check email duplicate (if email changed)
+    cur.execute("SELECT id FROM users WHERE email = %s AND id != %s", (user.email, user_id))
+    if cur.fetchone():
+        cur.close()
+        conn.close()
+        raise HTTPException(status_code=400, detail="Email already in use")
+        
+    if user.password:
+        hashed_password = pwd_context.hash(user.password)
+        cur.execute(
+            "UPDATE users SET name = %s, email = %s, role = %s, password = %s WHERE id = %s",
+            (user.name, user.email, user.role.lower(), hashed_password, user_id)
+        )
+    else:
+        cur.execute(
+            "UPDATE users SET name = %s, email = %s, role = %s WHERE id = %s",
+            (user.name, user.email, user.role.lower(), user_id)
+        )
+        
+    conn.commit()
+    cur.close()
+    conn.close()
+    return {"id": user_id, "name": user.name, "email": user.email, "role": user.role}
