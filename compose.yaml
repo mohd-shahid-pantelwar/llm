@@ -13,7 +13,7 @@ services:
   worker:
     build: .
     container_name: rag-worker
-    command: python workers/worker.py
+    command: python workers/ingest_worker.py
     env_file:
       - .env
     restart: always

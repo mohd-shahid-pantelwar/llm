@@ -129,6 +129,8 @@ def init_db():
         );
     """)
 
+    conn.commit()
+
     try:
         cur.execute("ALTER TABLE notes ADD COLUMN chat_history JSONB DEFAULT '[]'::jsonb;")
     except Exception:

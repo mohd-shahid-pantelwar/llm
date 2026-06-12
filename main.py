@@ -4,9 +4,20 @@ from routers import chat, upload, ws_chat, health, models, auth, users, chats, f
 
 from fastapi.middleware.cors import CORSMiddleware
 
+from contextlib import asynccontextmanager
+from init_db import init_db
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Initialize the database
+    init_db()
+    print("Database tables initialized.")
+    yield
+
 app = FastAPI(
     title="LLM OpenUI",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 
