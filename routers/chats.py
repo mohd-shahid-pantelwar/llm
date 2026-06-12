@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 import json
 import time
+import datetime
 from database.db import get_conn
 from routers.users import get_current_user
 
@@ -23,6 +24,26 @@ class ChatUpdate(BaseModel):
     pinned: Optional[bool] = None
     is_archived: Optional[bool] = None
     folder_id: Optional[str] = None
+
+def format_relative_time(timestamp: int) -> str:
+    if not timestamp:
+        return "Just now"
+    dt = datetime.datetime.fromtimestamp(timestamp)
+    now = datetime.datetime.now()
+    
+    if dt.date() == now.date():
+        diff = int(time.time()) - timestamp
+        if diff < 60:
+            return "Just now"
+        if diff < 3600:
+            mins = diff // 60
+            return f"{mins}m ago"
+        hours = diff // 3600
+        return f"{hours}h ago"
+    
+    date_diff = (now.date() - dt.date()).days
+    days_to_show = date_diff + 1
+    return f"{days_to_show}d"
 
 @router.get("")
 async def get_chats(current_user: dict = Depends(get_current_user)):
@@ -51,7 +72,7 @@ async def get_chats(current_user: dict = Depends(get_current_user)):
             "messages": r[3] if isinstance(r[3], list) else json.loads(r[3]) if r[3] else [],
             "pinned": r[4],
             "folderId": r[5],
-            "lastMessageAt": "Just now" # or format time
+            "lastMessageAt": format_relative_time(r[6])
         })
     return chats
 

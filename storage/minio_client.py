@@ -1,3 +1,4 @@
+import os
 from minio import Minio
 import io
 

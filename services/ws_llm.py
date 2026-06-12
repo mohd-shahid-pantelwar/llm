@@ -1,6 +1,7 @@
 import httpx
 
-OLLAMA_URL = "http://10.0.10.131:11434"
+import os
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://10.0.10.131:11434")
 
 
 async def stream_llm_response(prompt: str, model="gemma3:latest"):

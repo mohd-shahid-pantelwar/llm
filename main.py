@@ -1,5 +1,6 @@
+import os
 from fastapi import FastAPI
-from routers import chat, upload, ws_chat, health, models, auth, users, chats, folders, workspace
+from routers import chat, upload, ws_chat, health, models, auth, users, chats, folders, workspace, feedback, notes
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -20,10 +21,12 @@ app.include_router(users.router)
 app.include_router(chats.router)
 app.include_router(folders.router)
 app.include_router(workspace.router)
+app.include_router(feedback.router)
+app.include_router(notes.router)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[os.environ.get("FRONTEND_URL", "http://localhost:3000")],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

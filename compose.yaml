@@ -1,28 +1,19 @@
 version: "3.9"
 
 services:
-
   api:
     build: .
     container_name: rag-api
     ports:
       - "8000:8000"
-    environment:
-      DATABASE_URL: postgresql://openwebui:openwebui@10.0.10.131:5432/rag
-      REDIS_URL: redis://10.0.10.131:6379
-      MINIO_URL: http://10.0.10.131:9000
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
+    env_file:
+      - .env
     restart: always
 
   worker:
     build: .
     container_name: rag-worker
     command: python workers/worker.py
-    environment:
-      DATABASE_URL: postgresql://openwebui:openwebui@10.0.10.131:5432/rag
-      REDIS_URL: redis://10.0.10.131:6379
-      MINIO_URL: http://10.0.10.131:9000
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
+    env_file:
+      - .env
     restart: always

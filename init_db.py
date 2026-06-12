@@ -100,8 +100,45 @@ def init_db():
         );
     """)
 
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS feedback (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            message_id VARCHAR(255) NOT NULL,
+            chat_id VARCHAR(255) REFERENCES chats(id) ON DELETE CASCADE,
+            model_name VARCHAR(255),
+            type VARCHAR(10) NOT NULL CHECK (type IN ('like', 'dislike')),
+            rating INTEGER CHECK (rating BETWEEN 1 AND 10),
+            reasons JSONB DEFAULT '[]'::jsonb,
+            details TEXT,
+            tag VARCHAR(255),
+            created_at BIGINT
+        );
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS notes (
+            id VARCHAR(255) PRIMARY KEY,
+            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            title VARCHAR(255) NOT NULL,
+            content TEXT,
+            color VARCHAR(255),
+            chat_history JSONB DEFAULT '[]'::jsonb,
+            updated_at BIGINT,
+            created_at BIGINT
+        );
+    """)
+
+    try:
+        cur.execute("ALTER TABLE notes ADD COLUMN chat_history JSONB DEFAULT '[]'::jsonb;")
+    except Exception:
+        conn.rollback()
+    else:
+        conn.commit()
+
     # Insert a default admin user if none exists
     cur.execute("SELECT COUNT(*) FROM users")
+
     if cur.fetchone()[0] == 0:
         # password is 'admin' hashed with bcrypt
         # We will use bcrypt to generate this in python but for now we just use a placeholder

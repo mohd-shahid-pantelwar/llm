@@ -5,7 +5,7 @@ import requests
 import time
 import json
 from database.db import get_conn
-from routers.users import get_current_user
+from routers.users import get_current_user, get_admin_user
 
 router = APIRouter(prefix="/api")
 
@@ -18,31 +18,65 @@ class PresetData(BaseModel):
     capabilities: Optional[dict] = None
     defaultFeatures: Optional[dict] = None
     builtinTools: Optional[dict] = None
+    access_control: Optional[dict] = None
+    selectedKnowledge: Optional[list] = None
+    selectedTools: Optional[list] = None
+    selectedSkills: Optional[list] = None
 
 @router.get("/models")
-def get_models():
+def get_models(current_user: dict = Depends(get_current_user)):
     mapped_models = []
+    seen_ids = set()
     
     # 1. Fetch from local DB
     try:
         conn = get_conn()
         cur = conn.cursor()
-        cur.execute("SELECT id, name, meta, is_active FROM models")
+        cur.execute("SELECT id, name, meta, is_active, access_control, user_id FROM models")
         db_models = cur.fetchall()
         for row in db_models:
             meta = row[2] if row[2] else {}
-            mapped_models.append({
-                "id": row[0],
-                "name": row[1],
-                "provider": meta.get("provider", "Custom"),
-                "description": meta.get("description", "A custom model"),
-                "systemPrompt": meta.get("systemPrompt", ""),
-                "capabilities": meta.get("capabilities", {}),
-                "defaultFeatures": meta.get("defaultFeatures", {}),
-                "builtinTools": meta.get("builtinTools", {}),
-                "color": "from-orange-500 to-amber-600",
-                "is_active": row[3]
-            })
+            ac = row[4] if row[4] else {"type": "public", "allow_public_write": False, "access_list": []}
+            owner_id = row[5]
+            is_active = row[3]
+            
+            # Check access permission
+            is_visible = False
+            # Admin always sees everything
+            if current_user.get("role") == "admin":
+                is_visible = True
+            else:
+                # Standard users only see active models they have access to
+                if is_active:
+                    if owner_id == current_user.get("id"):
+                        is_visible = True
+                    elif ac.get("type", "public") == "public":
+                        is_visible = True
+                    elif ac.get("type") == "private":
+                        access_list = ac.get("access_list", [])
+                        for entry in access_list:
+                            if entry.get("type") == "user" and int(entry.get("id")) == int(current_user.get("id")):
+                                is_visible = True
+                                break
+            
+            if is_visible:
+                mapped_models.append({
+                    "id": row[0],
+                    "name": row[1],
+                    "provider": meta.get("provider", "Custom"),
+                    "description": meta.get("description", "A custom model"),
+                    "systemPrompt": meta.get("systemPrompt", ""),
+                    "capabilities": meta.get("capabilities", {}),
+                    "defaultFeatures": meta.get("defaultFeatures", {}),
+                    "builtinTools": meta.get("builtinTools", {}),
+                    "selectedKnowledge": meta.get("selectedKnowledge", []),
+                    "selectedTools": meta.get("selectedTools", []),
+                    "selectedSkills": meta.get("selectedSkills", []),
+                    "color": "from-orange-500 to-amber-600",
+                    "is_active": is_active,
+                    "access_control": ac
+                })
+                seen_ids.add(row[0])
         cur.close()
         conn.close()
     except Exception as e:
@@ -50,21 +84,27 @@ def get_models():
         
     # 2. Fetch from Ollama
     try:
-        res = requests.get("http://10.0.10.131:11434/api/tags")
+        OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://10.0.10.131:11434")
+        res = requests.get(f"{OLLAMA_URL}/api/tags")
         if res.status_code == 200:
             data = res.json()
             for m in data.get("models", []):
                 name = m.get("name", "")
                 if "embed" in name.lower():
                     continue
+                model_id = m.get("model", m.get("name"))
+                if model_id in seen_ids:
+                    continue
+                    
                 mapped_models.append({
-                    "id": m.get("model", m.get("name")),
+                    "id": model_id,
                     "name": m.get("name", "").split(":")[0].capitalize(),
                     "provider": "Ollama Local",
                     "description": f"Local Ollama model: {m.get('model')}",
                     "systemPrompt": "",
                     "color": "from-blue-500 to-indigo-600",
-                    "is_active": True
+                    "is_active": True,
+                    "access_control": {"type": "public", "allow_public_write": False, "access_list": []}
                 })
     except Exception as e:
         print("Error fetching from Ollama:", e)
@@ -72,7 +112,7 @@ def get_models():
     return mapped_models
 
 @router.post("/models/preset")
-def create_model_preset(preset: PresetData, current_user: dict = Depends(get_current_user)):
+def create_model_preset(preset: PresetData, current_user: dict = Depends(get_admin_user)):
     user_id = current_user.get("id")
     try:
         model_id = preset.id
@@ -85,9 +125,13 @@ def create_model_preset(preset: PresetData, current_user: dict = Depends(get_cur
             "systemPrompt": preset.systemPrompt,
             "capabilities": preset.capabilities,
             "defaultFeatures": preset.defaultFeatures,
-            "builtinTools": preset.builtinTools
+            "builtinTools": preset.builtinTools,
+            "selectedKnowledge": preset.selectedKnowledge,
+            "selectedTools": preset.selectedTools,
+            "selectedSkills": preset.selectedSkills
         })
         
+        ac = json.dumps(preset.access_control) if preset.access_control else json.dumps({"type": "public", "allow_public_write": False, "access_list": []})
         now = int(time.time())
         
         conn = get_conn()
@@ -102,18 +146,18 @@ def create_model_preset(preset: PresetData, current_user: dict = Depends(get_cur
             if existing_user_id is None or existing_user_id == user_id:
                 cur.execute("""
                     UPDATE models 
-                    SET name = %s, meta = %s, updated_at = %s, user_id = %s 
+                    SET name = %s, meta = %s, updated_at = %s, user_id = %s, access_control = %s 
                     WHERE id = %s
-                """, (preset.name, meta, now, user_id, model_id))
+                """, (preset.name, meta, now, user_id, ac, model_id))
             else:
                 cur.close()
                 conn.close()
                 raise HTTPException(status_code=403, detail="A model preset with this ID already exists and is owned by another user.")
         else:
             cur.execute("""
-                INSERT INTO models (id, user_id, name, meta, updated_at, created_at, is_active)
-                VALUES (%s, %s, %s, %s, %s, %s, true)
-            """, (model_id, user_id, preset.name, meta, now, now))
+                INSERT INTO models (id, user_id, name, meta, updated_at, created_at, is_active, access_control)
+                VALUES (%s, %s, %s, %s, %s, %s, true, %s)
+            """, (model_id, user_id, preset.name, meta, now, now, ac))
             
         conn.commit()
         cur.close()
@@ -126,7 +170,7 @@ def create_model_preset(preset: PresetData, current_user: dict = Depends(get_cur
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/models/preset/{model_id}")
-def delete_model_preset(model_id: str, current_user: dict = Depends(get_current_user)):
+def delete_model_preset(model_id: str, current_user: dict = Depends(get_admin_user)):
     user_id = current_user.get("id")
     try:
         conn = get_conn()
@@ -141,7 +185,7 @@ def delete_model_preset(model_id: str, current_user: dict = Depends(get_current_
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.patch("/models/preset/{model_id}/toggle")
-def toggle_model_active(model_id: str, current_user: dict = Depends(get_current_user)):
+def toggle_model_active(model_id: str, current_user: dict = Depends(get_admin_user)):
     """Toggle is_active for a model preset and persist to DB."""
     user_id = current_user.get("id")
     try:

@@ -1,26 +1,40 @@
 import sys
 import os
+import jwt
+import time
 from unittest.mock import patch, AsyncMock
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from fastapi.testclient import TestClient
 from main import app
+from routers.auth import SECRET_KEY, ALGORITHM
 
 client = TestClient(app)
+
+# Generate user token
+user_payload = {
+    "id": 999,
+    "name": "Normal User",
+    "email": "user@example.com",
+    "role": "user",
+    "exp": int(time.time()) + 3600
+}
+user_token = jwt.encode(user_payload, SECRET_KEY, algorithm=ALGORITHM)
+headers = {"Authorization": f"Bearer {user_token}"}
 
 # ── Route registration tests (no auth needed to verify routing) ──────────────
 
 def test_chat_route_registered():
-    """POST /api/chat exists — returns 422 (missing body) not 404."""
+    """POST /api/chat exists — returns 422 (missing body) or 401, not 404."""
     response = client.post("/api/chat", json={})
     assert response.status_code != 404, "Chat route is not registered"
     print(f"POST /api/chat (empty body) → {response.status_code} ✓")
 
 def test_chat_model_routes_registered():
     """Model preset routes exist and return expected auth/validation codes."""
-    # GET /api/models is public
-    response = client.get("/api/models")
+    # GET /api/models requires auth now
+    response = client.get("/api/models", headers=headers)
     assert response.status_code in (200, 500), f"Unexpected: {response.status_code}"
     print(f"GET /api/models → {response.status_code} ✓")
 
@@ -63,7 +77,7 @@ def test_chat_with_mock_ollama():
             "query": "What is Docker",
             "top_k": 5,
             "use_rag": False
-        })
+        }, headers=headers)
 
     print(f"POST /api/chat (mocked) → {response.status_code}")
     assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
@@ -110,8 +124,8 @@ async def test_rag_file_filtering():
         
         # Check that we only passed "This is file two content." chunks to embed,
         # not "This is file one content."
-        assert mock_embed.call_count == 2 # 1 for query, 1 for chunks
-        chunk_args = mock_embed.call_args_list[1][0][0]
+        assert mock_embed.call_count == 2 # 1 for chunks, 1 for query
+        chunk_args = mock_embed.call_args_list[0][0][0]
         # Verify that all chunks belong to file-2
         assert len(chunk_args) > 0
         for chunk in chunk_args:
