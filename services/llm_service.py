@@ -1,4 +1,5 @@
 import httpx
+import json
 
 import os
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://10.0.10.131:11434")
@@ -9,8 +10,7 @@ class LLMService:
         self.model = model
 
     async def generate(self, prompt: str, system_prompt: str = None):
-        # Connect timeout: 10s. Read timeout: 300s (5 min) — large models can be slow.
-        timeout = httpx.Timeout(timeout=300.0, connect=10.0)
+        timeout = httpx.Timeout(timeout=None, connect=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
             payload = {
                 "model": self.model,
@@ -39,8 +39,7 @@ class LLMService:
             }
 
     async def generate_stream(self, prompt: str, system_prompt: str = None):
-        import json
-        timeout = httpx.Timeout(timeout=300.0, connect=10.0)
+        timeout = httpx.Timeout(timeout=None, connect=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
             payload = {
                 "model": self.model,
