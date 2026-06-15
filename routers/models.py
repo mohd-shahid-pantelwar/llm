@@ -86,7 +86,7 @@ def get_models(current_user: dict = Depends(get_current_user)):
     # 2. Fetch from Ollama
     try:
         OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://10.0.10.131:11434")
-        res = requests.get(f"{OLLAMA_URL}/api/tags")
+        res = requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
         if res.status_code == 200:
             data = res.json()
             for m in data.get("models", []):
