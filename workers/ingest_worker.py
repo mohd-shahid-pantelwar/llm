@@ -1,3 +1,4 @@
+
 from database.db import get_conn
 from services.ingest_service import ingest_document
 from storage.minio_client import get_file
@@ -46,3 +47,11 @@ def process_file(file_name, content=None):
     finally:
         cur.close()
         conn.close()
+
+if __name__ == "__main__":
+    from rq import Worker
+    from workers.queue import redis_conn
+    
+    print("Starting RQ worker for document ingestion...")
+    worker = Worker(['default'], connection=redis_conn)
+    worker.work()
