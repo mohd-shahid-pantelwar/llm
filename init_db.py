@@ -24,6 +24,7 @@ def init_db():
             params JSONB,
             meta JSONB,
             is_active BOOLEAN DEFAULT true,
+            access_control JSONB,
             updated_at BIGINT,
             created_at BIGINT
         );
@@ -63,6 +64,7 @@ def init_db():
             title VARCHAR(255) NOT NULL,
             description TEXT,
             content TEXT,
+            access_control JSONB,
             created_at BIGINT
         );
     """)
@@ -74,6 +76,7 @@ def init_db():
             title VARCHAR(255) NOT NULL,
             description TEXT,
             content TEXT,
+            access_control JSONB,
             created_at BIGINT
         );
     """)
@@ -85,6 +88,7 @@ def init_db():
             title VARCHAR(255) NOT NULL,
             description TEXT,
             content TEXT,
+            access_control JSONB,
             created_at BIGINT
         );
     """)
@@ -96,6 +100,7 @@ def init_db():
             title VARCHAR(255) NOT NULL,
             description TEXT,
             content TEXT,
+            access_control JSONB,
             created_at BIGINT
         );
     """)
@@ -131,12 +136,24 @@ def init_db():
 
     conn.commit()
 
+    conn.commit()
+
     try:
         cur.execute("ALTER TABLE notes ADD COLUMN chat_history JSONB DEFAULT '[]'::jsonb;")
     except Exception:
         conn.rollback()
     else:
         conn.commit()
+
+    # Add access_control to workspace and model tables for backward compatibility
+    for table in ["prompts", "skills", "tools", "knowledge", "models"]:
+        try:
+            cur.execute(f"ALTER TABLE {table} ADD COLUMN access_control JSONB;")
+        except Exception:
+            conn.rollback()
+        else:
+            conn.commit()
+
 
     # Insert a default admin user if none exists
     cur.execute("SELECT COUNT(*) FROM users")
