@@ -3,6 +3,7 @@ version: "3.9"
 services:
   api:
     build: .
+    image: llm-backend-image
     container_name: rag-api
     ports:
       - "8001:8000"
@@ -12,6 +13,7 @@ services:
 
   worker:
     build: .
+    image: llm-backend-image
     container_name: rag-worker
     command: python -u -m workers.ingest_worker
     env_file:
