@@ -148,25 +148,45 @@ async def chat(req: ChatRequest, current_user: dict = Depends(get_current_user))
         from fastapi.responses import StreamingResponse
         
         async def stream_generator():
+            import asyncio
             if req.use_rag or final_knowledge_id:
                 from services.rag_service import ask_stream
-                async for chunk in ask_stream(req.query, req.top_k, resolved_model, final_knowledge_id, file_id=req.file_id, system_prompt=final_system_prompt, history=req.history):
-                    yield f"data: {json.dumps({'answer': chunk.get('response', ''), 'done': chunk.get('done', False), 'stats': chunk.get('stats', {}), 'sources': chunk.get('sources', [])})}\n\n"
+                gen = ask_stream(req.query, req.top_k, resolved_model, final_knowledge_id, file_id=req.file_id, system_prompt=final_system_prompt, history=req.history)
             else:
-                try:
-                    llm = LLMService(model=resolved_model)
-                    final_query = req.query
-                    if req.history:
-                        prompt_with_history = "Conversation history:\n"
-                        for msg in req.history:
-                            role = "User" if msg.sender == "user" else "Assistant"
-                            prompt_with_history += f"{role}: {msg.content}\n"
-                        prompt_with_history += f"\nQuestion:\n{req.query}"
-                        final_query = prompt_with_history
-                    async for chunk in llm.generate_stream(final_query, system_prompt=final_system_prompt):
-                        yield f"data: {json.dumps({'answer': chunk.get('response', ''), 'done': chunk.get('done', False), 'stats': chunk.get('stats', {}), 'sources': []})}\n\n"
-                except Exception as e:
-                    yield f"data: {json.dumps({'answer': f'⚠️ Error: {str(e)}', 'done': True, 'stats': {}, 'sources': []})}\n\n"
+                llm = LLMService(model=resolved_model)
+                final_query = req.query
+                if req.history:
+                    prompt_with_history = "Conversation history:\n"
+                    for msg in req.history:
+                        role = "User" if msg.sender == "user" else "Assistant"
+                        prompt_with_history += f"{role}: {msg.content}\n"
+                    prompt_with_history += f"\nQuestion:\n{req.query}"
+                    final_query = prompt_with_history
+                gen = llm.generate_stream(final_query, system_prompt=final_system_prompt)
+
+            try:
+                iterator = gen.__aiter__()
+                task = None
+                while True:
+                    try:
+                        if task is None:
+                            task = asyncio.create_task(iterator.__anext__())
+                            
+                        done, pending = await asyncio.wait([task], timeout=15.0)
+                        
+                        if done:
+                            chunk = task.result()
+                            task = None  # Reset task for the next chunk
+                            yield f"data: {json.dumps({'answer': chunk.get('response', ''), 'done': chunk.get('done', False), 'stats': chunk.get('stats', {}), 'sources': chunk.get('sources', [])})}\n\n"
+                            if chunk.get('done'):
+                                break
+                        else:
+                            # Timeout reached, but Ollama is still thinking! Task remains in pending state.
+                            yield f"data: {json.dumps({'answer': '', 'done': False, 'stats': {}, 'sources': [], 'ping': True})}\n\n"
+                    except StopAsyncIteration:
+                        break
+            except Exception as e:
+                yield f"data: {json.dumps({'answer': f'⚠️ Error: {str(e)}', 'done': True, 'stats': {}, 'sources': []})}\n\n"
 
         return StreamingResponse(stream_generator(), media_type="text/event-stream")
 
