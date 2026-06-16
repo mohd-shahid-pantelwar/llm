@@ -6,7 +6,7 @@ from retrieval.chunking import simple_semantic_chunk
 from utils.text_cleaner import clean_text
 
 
-def ingest_document(text: str, reset: bool = False):
+def ingest_document(text: str, file_name: str = None, start_chunk: int = 0, reset: bool = False):
     print(f"\\n[rag-worker] Starting ingestion process... Text length: {len(text)} characters")
     
     chunks = simple_semantic_chunk(text)
@@ -23,9 +23,12 @@ def ingest_document(text: str, reset: bool = False):
         conn.commit()
 
     batch_size = 100
-    total_ingested = 0
+    total_ingested = start_chunk
 
-    for i in range(0, len(chunks), batch_size):
+    if start_chunk > 0:
+        print(f"[rag-worker] ♻️ Checkpoint found! Resuming safely from chunk {start_chunk}...")
+
+    for i in range(start_chunk, len(chunks), batch_size):
         batch_chunks = chunks[i:i + batch_size]
         embeddings = embed(batch_chunks)
 
@@ -47,6 +50,11 @@ def ingest_document(text: str, reset: bool = False):
             data,
             template="(%s, %s::vector, to_tsvector('english', %s))"
         )
+        
+        # Checkpoint the progress!
+        if file_name:
+            cur.execute("UPDATE ingestion_jobs SET chunks_processed = %s WHERE file_name = %s", (i + batch_size, file_name))
+            
         conn.commit()
         total_ingested += len(batch_chunks)
         print(f"Ingested batch {i//batch_size + 1}, total {total_ingested}/{len(chunks)}")

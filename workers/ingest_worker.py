@@ -21,24 +21,35 @@ def process_file(file_name, content=None):
                 file_name VARCHAR(255),
                 status VARCHAR(50),
                 error TEXT,
+                chunks_processed INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
         conn.commit()
         
-        # 2. mark job as processing
-        cur.execute(
-            "INSERT INTO ingestion_jobs (job_id, file_name, status) VALUES (%s,%s,%s)",
-            (file_name, file_name, "processing")
-        )
+        # 2. Check if job exists and fetch checkpoint
+        cur.execute("SELECT chunks_processed FROM ingestion_jobs WHERE file_name=%s", (file_name,))
+        row = cur.fetchone()
+        start_chunk = row[0] if row else 0
+
+        if not row:
+            cur.execute(
+                "INSERT INTO ingestion_jobs (job_id, file_name, status, chunks_processed) VALUES (%s,%s,%s,%s)",
+                (file_name, file_name, "processing", 0)
+            )
+        else:
+            cur.execute(
+                "UPDATE ingestion_jobs SET status=%s WHERE file_name=%s",
+                ("processing", file_name)
+            )
         conn.commit()
 
-        print(f"\\n--- Job Queued ---")
+        print(f"\\n--- Job Queued (Checkpoint: {start_chunk}) ---")
         print(f"('{file_name}', 'processing')")
         print(f"------------------\\n")
 
-        # 3. REAL INGESTION (FIX HERE)
-        ingest_document(text)
+        # 3. REAL INGESTION with Checkpoint Resuming
+        ingest_document(text, file_name=file_name, start_chunk=start_chunk)
 
         # 4. mark success
         cur.execute(
