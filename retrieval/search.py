@@ -51,8 +51,18 @@ def hybrid_search(conn, query_embedding, query_text, top_k=5):
     ))
 
     results = cur.fetchall()
-    results = [r for r in results if is_good_chunk(r[1])]
-    return results[:top_k]
+    
+    filtered_results = []
+    for r in results:
+        vector_score = float(r[2]) if r[2] is not None else 0.0
+        text_score = float(r[3]) if r[3] is not None else 0.0
+        combined_score = 0.7 * vector_score + 0.3 * text_score
+        
+        # Apply minimum similarity threshold of 0.4
+        if combined_score >= 0.4 and is_good_chunk(r[1]):
+            filtered_results.append((r[0], r[1], combined_score))
+            
+    return filtered_results[:top_k]
 
 
 def is_good_chunk(text: str):

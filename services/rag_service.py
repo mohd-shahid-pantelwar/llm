@@ -105,11 +105,13 @@ async def retrieve_context_docs(query: str, top_k: int = 5, knowledge_id: str = 
                     # Sort by score descending
                     scores.sort(key=lambda x: x[1], reverse=True)
 
-                    # Convert to doc format
-                    top_docs = [
-                        {"id": item[0][0], "chunk": item[0][1], "score": item[1]}
-                        for i, item in enumerate(scores[:top_k])
-                    ]
+                    # Convert to doc format and apply threshold
+                    top_docs = []
+                    for i, item in enumerate(scores):
+                        if item[1] >= 0.4:
+                            top_docs.append({"id": item[0][0], "chunk": item[0][1], "score": item[1]})
+                        if len(top_docs) >= top_k:
+                            break
             except Exception as e:
                 print(f"Error doing RAG on knowledge base {knowledge_id}: {e}")
 

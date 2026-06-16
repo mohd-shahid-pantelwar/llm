@@ -12,13 +12,15 @@ class LLMService:
     async def generate(self, prompt: str, system_prompt: str = None):
         timeout = httpx.Timeout(timeout=None, connect=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
+            final_prompt = prompt
+            if system_prompt:
+                final_prompt = f"{system_prompt}\n\n{prompt}"
+
             payload = {
                 "model": self.model,
-                "prompt": prompt,
+                "prompt": final_prompt,
                 "stream": False
             }
-            if system_prompt:
-                payload["system"] = system_prompt
             res = await client.post(
                 f"{OLLAMA_URL}/api/generate",
                 json=payload
@@ -41,13 +43,15 @@ class LLMService:
     async def generate_stream(self, prompt: str, system_prompt: str = None):
         timeout = httpx.Timeout(timeout=None, connect=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
+            final_prompt = prompt
+            if system_prompt:
+                final_prompt = f"{system_prompt}\n\n{prompt}"
+
             payload = {
                 "model": self.model,
-                "prompt": prompt,
+                "prompt": final_prompt,
                 "stream": True
             }
-            if system_prompt:
-                payload["system"] = system_prompt
             
             async with client.stream("POST", f"{OLLAMA_URL}/api/generate", json=payload) as response:
                 response.raise_for_status()
