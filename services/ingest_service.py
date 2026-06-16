@@ -7,20 +7,27 @@ from utils.text_cleaner import clean_text
 
 
 def ingest_document(text: str, reset: bool = False):
-
+    print(f"\\n[rag-worker] Starting ingestion process... Text length: {len(text)} characters")
+    
     chunks = simple_semantic_chunk(text)
+    print(f"[rag-worker] Successfully split into {len(chunks)} semantic chunks. Preparing to embed in batches...")
 
     if not chunks:
         return {"status": "empty", "chunks": 0}
 
-    embeddings = embed(chunks)
-
     conn = get_conn()
     cur = conn.cursor()
 
-    try:
-        if reset:
-            cur.execute("DELETE FROM documents")
+    if reset:
+        cur.execute("DELETE FROM documents")
+        conn.commit()
+
+    batch_size = 100
+    total_ingested = 0
+
+    for i in range(0, len(chunks), batch_size):
+        batch_chunks = chunks[i:i + batch_size]
+        embeddings = embed(batch_chunks)
 
         data = [
             (
@@ -28,7 +35,7 @@ def ingest_document(text: str, reset: bool = False):
                 emb.tolist() if isinstance(emb, np.ndarray) else emb,
                 chunk
             )
-            for chunk, emb in zip(chunks, embeddings)
+            for chunk, emb in zip(batch_chunks, embeddings)
         ]
 
         execute_values(
@@ -37,23 +44,17 @@ def ingest_document(text: str, reset: bool = False):
             INSERT INTO documents (chunk, embedding, content_tsv)
             VALUES %s
             """,
-            data
+            data,
+            template="(%s, %s::vector, to_tsvector('english', %s))"
         )
-
         conn.commit()
+        total_ingested += len(batch_chunks)
+        print(f"Ingested batch {i//batch_size + 1}, total {total_ingested}/{len(chunks)}")
 
-        return {
-            "status": "success",
-            "chunks": len(chunks)
-        }
+    return {
+        "status": "success",
+        "chunks": total_ingested
+    }
 
-    except Exception as e:
-        conn.rollback()
-        return {
-            "status": "error",
-            "error": str(e)
-        }
-
-    finally:
-        cur.close()
-        conn.close()
+    cur.close()
+    conn.close()

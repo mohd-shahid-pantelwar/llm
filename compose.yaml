@@ -9,6 +9,8 @@ services:
       - "8001:8000"
     env_file:
       - .env
+    volumes:
+      - ./:/app
     restart: always
 
   worker:
@@ -18,4 +20,6 @@ services:
     command: python -u -m workers.ingest_worker
     env_file:
       - .env
+    volumes:
+      - ./:/app
     restart: always

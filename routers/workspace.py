@@ -160,6 +160,94 @@ async def update_tool(item_id: str, item: WorkspaceItemUpdate, current_user: dic
 async def delete_tool(item_id: str, current_user: dict = Depends(get_current_user)):
     return _delete_item("tools", item_id, current_user["id"], "Tool")
 
+@router.post("/tools/{item_id}/execute")
+async def execute_tool(item_id: str, payload: dict, current_user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT content, access_control FROM tools WHERE id = %s AND user_id = %s", (item_id, current_user["id"]))
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    
+    if not row:
+        raise HTTPException(status_code=404, detail="Tool not found")
+        
+    code = row[0]
+    access_control_str = row[1]
+    if not code:
+        raise HTTPException(status_code=400, detail="Tool has no code")
+        
+    import re
+    import subprocess
+    requirements = []
+    req_match = re.search(r'requirements:\s*([^\n\r]+)', code, re.IGNORECASE)
+    if req_match:
+        reqs_str = req_match.group(1)
+        requirements = [r.strip() for r in reqs_str.split(',') if r.strip()]
+        
+    if requirements:
+        try:
+            subprocess.run(["pip", "install"] + requirements, check=True, capture_output=True)
+        except subprocess.CalledProcessError as e:
+            raise HTTPException(status_code=500, detail=f"Failed to install requirements: {e.stderr.decode('utf-8', errors='ignore')}")
+            
+    tool_env = {}
+    try:
+        from pydantic import BaseModel, Field
+        tool_env["BaseModel"] = BaseModel
+        tool_env["Field"] = Field
+        tool_env["__builtins__"] = __builtins__
+        exec(code, tool_env, tool_env)
+        
+        if 'Tools' not in tool_env:
+            raise HTTPException(status_code=400, detail="Tool script must contain a class named 'Tools'")
+            
+        tool_instance = tool_env['Tools']()
+        
+        # Inject valves from database (stored in access_control)
+        try:
+            if access_control_str:
+                if isinstance(access_control_str, dict):
+                    ac_data = access_control_str
+                else:
+                    import json
+                    ac_data = json.loads(access_control_str)
+                    if isinstance(ac_data, str):
+                        ac_data = json.loads(ac_data)
+                
+                saved_valves = ac_data.get("valves", {})
+                
+                # If the tool has a valves object, update it
+                if hasattr(tool_instance, "valves"):
+                    for k, v in saved_valves.items():
+                        setattr(tool_instance.valves, k, v)
+        except Exception as ve:
+            print("Failed to inject valves:", ve)
+            
+        method_name = payload.get("method_name")
+        if not method_name:
+            methods = [m for m in dir(tool_instance) if not m.startswith('_') and callable(getattr(tool_instance, m)) and m != 'valves']
+            if not methods:
+                raise HTTPException(status_code=400, detail="No callable methods found in Tools class")
+            method_name = methods[0]
+            
+        method = getattr(tool_instance, method_name)
+        kwargs = payload.get("kwargs", {})
+        
+        import inspect
+        if inspect.iscoroutinefunction(method):
+            result = await method(**kwargs)
+        else:
+            result = method(**kwargs)
+            
+        return {"status": "success", "result": result}
+        
+    except Exception as e:
+        import traceback
+        tb_str = traceback.format_exc()
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Tool execution failed: {str(e)}\n\nTraceback:\n{tb_str}")
+
 # ─── Knowledge ───────────────────────────────────────────────────────────────
 
 @router.get("/knowledge")

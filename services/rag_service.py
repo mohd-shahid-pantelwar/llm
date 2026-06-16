@@ -5,7 +5,7 @@ from typing import List
 
 from retrieval.search import hybrid_search
 from database.redis import cache_get, cache_set
-from services.embed_service import embed
+from services.embed_service import embed, async_embed
 from services.llm_service import LLMService
 from retrieval.rerank import rerank
 from database.db import get_conn
@@ -75,7 +75,7 @@ async def retrieve_context_docs(query: str, top_k: int = 5, knowledge_id: str = 
                         start += chunk_size - overlap
                     
                     if file_chunks:
-                        file_embs = embed(file_chunks)
+                        file_embs = await async_embed(file_chunks)
                         file_records = list(zip(file_chunks, file_embs))
                         cache_set(file_cache_key, file_records, ttl=30 * 24 * 3600)
                         
@@ -87,7 +87,7 @@ async def retrieve_context_docs(query: str, top_k: int = 5, knowledge_id: str = 
                     chunk_texts = [c[1] for c in chunks]
                     query = correct_query_typos(query, chunk_texts)
                     # Compute query embedding
-                    q_emb = embed([query])[0]
+                    q_emb = (await async_embed([query]))[0]
                     q_vec = np.array(q_emb)
                     q_norm = np.linalg.norm(q_vec)
                     if q_norm > 0:
@@ -113,12 +113,14 @@ async def retrieve_context_docs(query: str, top_k: int = 5, knowledge_id: str = 
                         if len(top_docs) >= top_k:
                             break
             except Exception as e:
+                import traceback
+                traceback.print_exc()
                 print(f"Error doing RAG on knowledge base {knowledge_id}: {e}")
 
     # 2. If no knowledge_id or no chunks found in the collection, fallback to global hybrid search
     if not top_docs:
         # embed query
-        q_emb = embed([query])[0]
+        q_emb = (await async_embed([query]))[0]
 
         # hybrid search (vector + keyword)
         conn = get_conn()
