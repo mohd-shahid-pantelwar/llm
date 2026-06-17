@@ -186,6 +186,19 @@ async def ask(query: str, top_k: int = 5, model: str = "gemma3:latest", knowledg
                     minio_content = file_bytes.decode("utf-8", errors="ignore")
                     chunk_text = f"--- Content from {ref_filename} ---\n{minio_content}"
                     print(f"🔥 LAZY LOAD SUCCESS: Intercepted FILE_REFERENCE and injected {len(minio_content)} bytes of logs from {ref_filename}!")
+                    
+                    # dynamically queue this bucket to be permanently embedded into the Vector Store!
+                    try:
+                        conn = get_conn()
+                        cur = conn.cursor()
+                        cur.execute("SELECT status FROM ingestion_jobs WHERE file_name = %s", (ref_filename,))
+                        if not cur.fetchone():
+                            print(f"[rag-api] ♻️ Queueing Lazy-Loaded bucket {ref_filename} for permanent Vector DB embedding...")
+                            from workers.queue import queue
+                            queue.enqueue("workers.ingest_worker.process_file", ref_filename)
+                        conn.close()
+                    except Exception as q_err:
+                        print(f"Failed to queue lazy loaded file for embedding: {q_err}")
                 except Exception as e:
                     print(f"Failed to lazy load {ref_filename} from Minio: {e}")
                     
@@ -284,6 +297,19 @@ async def ask_stream(query: str, top_k: int = 5, model: str = "gemma3:latest", k
                     minio_content = file_bytes.decode("utf-8", errors="ignore")
                     chunk_text = f"--- Content from {ref_filename} ---\n{minio_content}"
                     print(f"🔥 LAZY LOAD SUCCESS: Intercepted FILE_REFERENCE and injected {len(minio_content)} bytes of logs from {ref_filename}!")
+                    
+                    # dynamically queue this bucket to be permanently embedded into the Vector Store!
+                    try:
+                        conn = get_conn()
+                        cur = conn.cursor()
+                        cur.execute("SELECT status FROM ingestion_jobs WHERE file_name = %s", (ref_filename,))
+                        if not cur.fetchone():
+                            print(f"[rag-api] ♻️ Queueing Lazy-Loaded bucket {ref_filename} for permanent Vector DB embedding...")
+                            from workers.queue import queue
+                            queue.enqueue("workers.ingest_worker.process_file", ref_filename)
+                        conn.close()
+                    except Exception as q_err:
+                        print(f"Failed to queue lazy loaded file for embedding: {q_err}")
                 except Exception as e:
                     print(f"Failed to lazy load {ref_filename} from Minio: {e}")
                     
