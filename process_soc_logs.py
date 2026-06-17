@@ -20,30 +20,36 @@ def process_soc_logs(file_name):
     
     # 1. Fetch massive file
     file_bytes = get_file(file_name)
-    lines = file_bytes.decode("utf-8", errors="ignore").split("\\n")
+    text = file_bytes.decode("utf-8", errors="ignore")
     
-    print(f"Total log events loaded into memory: {len(lines)}")
+    print(f"File loaded into memory. Total size: {len(text) // (1024*1024)} MB")
     
     buckets = {}
     
+    print("Parsing JSON stream directly...")
+    
     decoder = json.JSONDecoder()
-    text = file_bytes.decode("utf-8", errors="ignore")
     pos = 0
+    total_parsed = 0
+    
+    # Fast regex to skip non-JSON garbage (like array brackets or commas between objects)
+    whitespace_re = re.compile(r'[\s,\[\]]+')
     
     while pos < len(text):
-        # Skip whitespace
-        while pos < len(text) and text[pos].isspace():
-            pos += 1
+        # Skip whitespaces, commas, or array brackets between objects
+        match = whitespace_re.match(text, pos)
+        if match:
+            pos = match.end()
             
         if pos >= len(text):
             break
             
         try:
-            log_obj, new_pos = decoder.raw_decode(text[pos:])
-            pos += new_pos
+            # ZERO COPY JSON parsing! Very fast.
+            log_obj, pos = decoder.raw_decode(text, pos)
+            total_parsed += 1
             
             origin = log_obj.get("_origin", "Unknown")
-            
             rule_desc = "Unknown_Category"
             
             # Wazuh Parsing
@@ -52,26 +58,34 @@ def process_soc_logs(file_name):
             
             # OPNsense Parsing
             elif origin == "OPNsense-Firewall" and "full_log" in log_obj:
-                # OPNsense syslogs look like: <134>1 2026-06-16T00:00... OPNsense.localdomain filterlog ...
                 match = re.search(r"OPNsense\.\S+\s+(\w+)", log_obj["full_log"])
                 if match:
                     rule_desc = match.group(1).capitalize() + " Log"
                 else:
                     rule_desc = "General Firewall Log"
             
+            # Extract date for chronological chunking
+            date_str = "Unknown_Date"
+            timestamp = log_obj.get("timestamp", "")
+            if timestamp:
+                # Extract YYYY-MM-DD from strings like "2024-02-29 14:35:22"
+                date_match = re.search(r"(\d{4}-\d{2}-\d{2})", timestamp)
+                if date_match:
+                    date_str = date_match.group(1)
+
             # Combine to make a grouping key
-            bucket_key = f"{origin}_{rule_desc}"
+            bucket_key = f"{date_str}_{origin}_{rule_desc}"
             
             if bucket_key not in buckets:
                 buckets[bucket_key] = {
-                    "header": f"Security Logs for {origin}. Alert Type: {rule_desc}",
+                    "header": f"Security Logs for {origin}. Date: {date_str}. Alert Type: {rule_desc}",
                     "logs": []
                 }
             
             buckets[bucket_key]["logs"].append(log_obj)
             
         except Exception as e:
-            # If we hit a decoding error, try to advance to the next '{'
+            # If parsing fails, try to find the next opening brace
             next_brace = text.find('{', pos + 1)
             if next_brace != -1:
                 pos = next_brace
@@ -79,7 +93,7 @@ def process_soc_logs(file_name):
                 break
             continue
             
-    print(f"Successfully grouped logs into {len(buckets)} distinct alert buckets!")
+    print(f"Successfully parsed {total_parsed} log objects into {len(buckets)} distinct alert buckets!")
     
     # 3. Create tiny files and embed headers
     conn = get_conn()
@@ -112,7 +126,7 @@ def process_soc_logs(file_name):
                 INSERT INTO documents (chunk, embedding, content_tsv) 
                 VALUES (%s, %s::vector, to_tsvector('english', %s))
                 """, 
-                (db_chunk_content, header_embedding.tolist(), header_text)
+                (db_chunk_content, header_embedding if isinstance(header_embedding, list) else header_embedding.tolist(), header_text)
             )
             
         except Exception as e:

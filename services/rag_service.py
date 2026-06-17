@@ -185,6 +185,7 @@ async def ask(query: str, top_k: int = 5, model: str = "gemma3:latest", knowledg
                     file_bytes = get_file(ref_filename)
                     minio_content = file_bytes.decode("utf-8", errors="ignore")
                     chunk_text = f"--- Content from {ref_filename} ---\n{minio_content}"
+                    print(f"🔥 LAZY LOAD SUCCESS: Intercepted FILE_REFERENCE and injected {len(minio_content)} bytes of logs from {ref_filename}!")
                 except Exception as e:
                     print(f"Failed to lazy load {ref_filename} from Minio: {e}")
                     
@@ -271,7 +272,22 @@ async def ask_stream(query: str, top_k: int = 5, model: str = "gemma3:latest", k
     unique_filenames = list(dict.fromkeys(d["id"] for d in top_docs))
     context = ""
     for d in top_docs:
-        context += f"Source: {d['id']}\n{d['chunk']}\n\n"
+        chunk_text = d['chunk']
+        if chunk_text.startswith("FILE_REFERENCE:["):
+            import re
+            match = re.search(r"FILE_REFERENCE:\[(.*?)\]", chunk_text)
+            if match:
+                ref_filename = match.group(1)
+                try:
+                    from storage.minio_client import get_file
+                    file_bytes = get_file(ref_filename)
+                    minio_content = file_bytes.decode("utf-8", errors="ignore")
+                    chunk_text = f"--- Content from {ref_filename} ---\n{minio_content}"
+                    print(f"🔥 LAZY LOAD SUCCESS: Intercepted FILE_REFERENCE and injected {len(minio_content)} bytes of logs from {ref_filename}!")
+                except Exception as e:
+                    print(f"Failed to lazy load {ref_filename} from Minio: {e}")
+                    
+        context += f"Source: {d['id']}\n{chunk_text}\n\n"
 
     prompt = ""
     if not system_prompt:

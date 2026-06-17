@@ -58,6 +58,7 @@ def resolve_model(model_id: str) -> tuple[str, Optional[str], Optional[str]]:
             base_model_id, meta_data = row[0], row[1]
             system_prompt = None
             knowledge_id = None
+            selected_tools = []
             if meta_data:
                 if isinstance(meta_data, str):
                     try:
@@ -66,6 +67,7 @@ def resolve_model(model_id: str) -> tuple[str, Optional[str], Optional[str]]:
                         pass
                 if isinstance(meta_data, dict):
                     system_prompt = meta_data.get("systemPrompt")
+                    selected_tools = meta_data.get("selectedTools", [])
                     selected_knowledge = meta_data.get("selectedKnowledge", [])
                     if selected_knowledge and len(selected_knowledge) > 0:
                         # Extract the ID from the first attached knowledge
@@ -87,11 +89,11 @@ def resolve_model(model_id: str) -> tuple[str, Optional[str], Optional[str]]:
             if not resolved_base:
                 resolved_base = "gemma3:latest"
                 
-            return resolved_base, system_prompt, knowledge_id
+            return resolved_base, system_prompt, knowledge_id, selected_tools
     except Exception as e:
         print("Error resolving model ID:", e)
 
-    return "gemma3:latest", None, None
+    return "gemma3:latest", None, None, []
 
 @router.post("/chat")
 async def chat(req: ChatRequest, current_user: dict = Depends(get_current_user)):
@@ -134,7 +136,7 @@ async def chat(req: ChatRequest, current_user: dict = Depends(get_current_user))
         cur.close()
         conn.close()
 
-    resolved_model, preset_system_prompt, preset_knowledge_id = resolve_model(req.model)
+    resolved_model, preset_system_prompt, preset_knowledge_id, selected_tools = resolve_model(req.model)
     
     # Use request's system_prompt if provided, otherwise fall back to model preset's system prompt
     if req.system_prompt is not None:
@@ -146,14 +148,100 @@ async def chat(req: ChatRequest, current_user: dict = Depends(get_current_user))
     final_knowledge_id = req.knowledge_id if req.knowledge_id else preset_knowledge_id
     
     user_id = str(current_user.get("sub", ""))
-    print(f"\n[Chat] Request for user_id: {user_id} | thread_id: {req.thread_id} | query: '{req.query}'")
+    print(f"\n[Chat] Request for user_id: {user_id} | thread_id: {req.thread_id} | model: {req.model} | query: '{req.query}'")
+    print(f"[Chat Debug] selected_tools: {[t.get('id') for t in selected_tools]}")
+
+    tool_executed = False
+
+    # 3. Tool Routing Agent
+    if selected_tools:
+        import httpx
+        from services.llm_service import LLMService
+        tool_prompt = f"""You are a tool-routing assistant. The user has access to the following tools:
+{json.dumps([{'name': t['title'], 'description': t['description'], 'id': t['id']} for t in selected_tools])}
+
+User Query: "{req.query}"
+
+Instructions:
+1. If the user explicitly asks to "execute the tool", "fetch logs", "pull updates", or "run the fetcher", reply with EXACTLY the tool ID.
+2. If the user is just asking you to "analyze", "summarize", or answer a question about the logs/data they already have (e.g. "show me AppArmor events"), you MUST reply with exactly "NO" so they can query the existing database instead!
+3. Only trigger the tool if you are absolutely sure they want to ingest NEW data from the servers.
+
+Decision:"""
+        try:
+            tool_llm = LLMService(model=resolved_model)
+            tool_res = await tool_llm.generate(tool_prompt)
+            tool_answer = tool_res.get("response", "").strip()
+            print(f"🤖 [Tool Router] LLM Decision: '{tool_answer}'")
+            
+            for t in selected_tools:
+                if t['id'].lower() in tool_answer.lower():
+                    print(f"🤖 [Agent] User requested tool {t['id']}, executing natively via workspace API...")
+                    # Get the JWT token from the original request to authenticate the tool call
+                    auth_header = req.model  # Not available directly, let's execute natively via DB!
+                    
+                    import psycopg2
+                    conn = get_conn()
+                    cur = conn.cursor()
+                    cur.execute("SELECT content, access_control FROM tools WHERE id=%s", (t['id'],))
+                    row = cur.fetchone()
+                    cur.close()
+                    conn.close()
+                    
+                    if row:
+                        code = row[0]
+                        access_control = row[1]
+                        if isinstance(access_control, str):
+                            access_control = json.loads(access_control)
+                        valves = access_control.get("valves", {})
+                        
+                        # Auto-install requirements from docstring!
+                        import re
+                        import subprocess
+                        import sys
+                        req_match = re.search(r"requirements:\s*(.+)", code, re.IGNORECASE)
+                        if req_match:
+                            requirements_str = req_match.group(1).strip()
+                            if requirements_str:
+                                reqs = [r.strip() for r in requirements_str.split(',') if r.strip()]
+                                print(f"📦 [Tool Router] Installing requirements: {reqs}")
+                                for req_pkg in reqs:
+                                    try:
+                                        subprocess.check_call([sys.executable, "-m", "pip", "install", req_pkg])
+                                    except Exception as pip_err:
+                                        print(f"⚠️ Failed to install {req_pkg}: {pip_err}")
+                        
+                        tool_env = {}
+                        exec(code, tool_env, tool_env)
+                        tool_instance = tool_env['Tools']()
+                        if hasattr(tool_instance, "valves"):
+                            for k, v in valves.items():
+                                setattr(tool_instance.valves, k, v)
+                                
+                        # Call the first bound method
+                        import inspect
+                        methods = [m for m in dir(tool_instance) if not m.startswith('_') and inspect.ismethod(getattr(tool_instance, m))]
+                        if methods:
+                            method = getattr(tool_instance, methods[0])
+                            print(f"Calling method: {method.__name__}")
+                            tool_result = method()
+                            print(f"✅ Tool {t['id']} executed successfully!")
+                            
+                            # Append the tool result to the history so the LLM knows what happened!
+                            tool_msg = ChatMessage(sender="system", content=f"Tool {t['title']} execution result:\n{tool_result}")
+                            if req.history is None:
+                                req.history = []
+                            req.history.append(tool_msg)
+                            tool_executed = True
+        except Exception as e:
+            print(f"Tool Router Error: {e}")
 
     if req.stream:
         from fastapi.responses import StreamingResponse
         
         async def stream_generator():
             import asyncio
-            if req.use_rag or final_knowledge_id:
+            if (req.use_rag or final_knowledge_id or "soc" in req.model.lower()) and not tool_executed:
                 from services.rag_service import ask_stream
                 gen = ask_stream(req.query, req.top_k, resolved_model, final_knowledge_id, file_id=req.file_id, system_prompt=final_system_prompt, history=req.history, user_id=user_id)
             else:
@@ -162,12 +250,12 @@ async def chat(req: ChatRequest, current_user: dict = Depends(get_current_user))
                 if req.history:
                     prompt_with_history = "Conversation history:\n"
                     for msg in req.history:
-                        role = "User" if msg.sender == "user" else "Assistant"
+                        role = "System" if msg.sender == "system" else ("User" if msg.sender == "user" else "Assistant")
                         prompt_with_history += f"{role}: {msg.content}\n"
                     prompt_with_history += f"\nQuestion:\n{req.query}"
                     final_query = prompt_with_history
                 gen = llm.generate_stream(final_query, system_prompt=final_system_prompt)
-
+            
             try:
                 iterator = gen.__aiter__()
                 task = None
@@ -194,8 +282,9 @@ async def chat(req: ChatRequest, current_user: dict = Depends(get_current_user))
 
         return StreamingResponse(stream_generator(), media_type="text/event-stream")
 
-    if req.use_rag or final_knowledge_id:
+    if req.use_rag or final_knowledge_id or "soc" in req.model.lower():
         return await ask(req.query, req.top_k, resolved_model, final_knowledge_id, file_id=req.file_id, system_prompt=final_system_prompt, history=req.history, user_id=user_id)
+    
     import httpx
     try:
         llm = LLMService(model=resolved_model)
