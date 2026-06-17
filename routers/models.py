@@ -83,32 +83,33 @@ def get_models(current_user: dict = Depends(get_current_user)):
     except Exception as e:
         print("Error fetching from DB:", e)
         
-    # 2. Fetch from Ollama
-    try:
-        OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://10.0.10.131:11434")
-        res = requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
-        if res.status_code == 200:
-            data = res.json()
-            for m in data.get("models", []):
-                name = m.get("name", "")
-                if "embed" in name.lower():
-                    continue
-                model_id = m.get("model", m.get("name"))
-                if model_id in seen_ids:
-                    continue
-                    
-                mapped_models.append({
-                    "id": model_id,
-                    "name": m.get("name", "").split(":")[0].capitalize(),
-                    "provider": "Ollama Local",
-                    "description": f"Local Ollama model: {m.get('model')}",
-                    "systemPrompt": "",
-                    "color": "from-blue-500 to-indigo-600",
-                    "is_active": True,
-                    "access_control": {"type": "public", "allow_public_write": False, "access_list": []}
-                })
-    except Exception as e:
-        print("Error fetching from Ollama:", e)
+    # 2. Fetch from Ollama (Admin Only)
+    if current_user.get("role") == "admin":
+        try:
+            OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://10.0.10.131:11434")
+            res = requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
+            if res.status_code == 200:
+                data = res.json()
+                for m in data.get("models", []):
+                    name = m.get("name", "")
+                    if "embed" in name.lower():
+                        continue
+                    model_id = m.get("model", m.get("name"))
+                    if model_id in seen_ids:
+                        continue
+                        
+                    mapped_models.append({
+                        "id": model_id,
+                        "name": m.get("name", "").split(":")[0].capitalize(),
+                        "provider": "Ollama Local",
+                        "description": f"Local Ollama model: {m.get('model')}",
+                        "systemPrompt": "",
+                        "color": "from-blue-500 to-indigo-600",
+                        "is_active": True,
+                        "access_control": {"type": "public", "allow_public_write": False, "access_list": []}
+                    })
+        except Exception as e:
+            print("Error fetching from Ollama:", e)
         
     return mapped_models
 

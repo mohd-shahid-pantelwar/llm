@@ -156,7 +156,7 @@ async def ask(query: str, top_k: int = 5, model: str = "gemma3:latest", knowledg
         context += f"Source: {d['id']}\n{d['chunk']}\n\n"
 
     # 4. prompt
-    prompt = "You are a helpful assistant.\n\n"
+    prompt = "You are a helpful assistant. Use the provided context to answer the question if it is relevant. If the context does not contain the answer, rely on your general knowledge to assist the user.\n\n"
     if context:
         prompt += f"Context:\n{context}\n\n"
     
@@ -183,14 +183,21 @@ async def ask(query: str, top_k: int = 5, model: str = "gemma3:latest", knowledg
         except Exception as e:
             print("Error resolving system prompt placeholders:", e)
 
+    # Calculate RAG retrieval confidence score (average of top_k vector matches)
+    retrieval_confidence = sum(d['score'] for d in top_docs) / len(top_docs) if top_docs else 0.0
+    print(f"\n[RAG] Query: '{corrected_query}' | Retrieval Confidence Score: {retrieval_confidence:.2f}\n")
+
     # 5. LLM call
     local_llm = LLMService(model=model)
     res_data = await local_llm.generate(prompt, system_prompt=system_prompt)
+    
+    stats = res_data.get("stats", {})
+    stats["confidence_score"] = retrieval_confidence
 
     result = {
         "query": corrected_query,
         "answer": res_data.get("response", ""),
-        "stats": res_data.get("stats", {}),
+        "stats": stats,
         "sources": top_docs
     }
 
@@ -220,7 +227,7 @@ async def ask_stream(query: str, top_k: int = 5, model: str = "gemma3:latest", k
     for d in top_docs:
         context += f"Source: {d['id']}\n{d['chunk']}\n\n"
 
-    prompt = "You are a helpful assistant.\n\n"
+    prompt = "You are a helpful assistant. Use the provided context to answer the question if it is relevant. If the context does not contain the answer, rely on your general knowledge to assist the user.\n\n"
     if context:
         prompt += f"Context:\n{context}\n\n"
     
@@ -249,13 +256,25 @@ async def ask_stream(query: str, top_k: int = 5, model: str = "gemma3:latest", k
     local_llm = LLMService(model=model)
     full_response = ""
     last_stats = {}
+    
+    # Calculate RAG retrieval confidence score (average of top_k vector matches)
+    retrieval_confidence = sum(d['score'] for d in top_docs) / len(top_docs) if top_docs else 0.0
+    print(f"\n[RAG] Query: '{corrected_query}' | Retrieval Confidence Score: {retrieval_confidence:.2f}\n")
+
     async for chunk in local_llm.generate_stream(prompt, system_prompt=system_prompt):
         full_response += chunk.get("response", "")
         if chunk.get("stats"):
             last_stats = chunk["stats"]
+            last_stats["confidence_score"] = retrieval_confidence
         
         # Include sources on the first chunk or all chunks, let's include on all/first chunk for client visibility
         chunk["sources"] = top_docs
+        
+        # Inject the confidence score into the chunk's stats stream so the UI can see it immediately
+        if "stats" not in chunk or not chunk["stats"]:
+            chunk["stats"] = {}
+        chunk["stats"]["confidence_score"] = retrieval_confidence
+        
         yield chunk
 
     result = {

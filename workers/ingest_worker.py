@@ -78,7 +78,29 @@ def process_file(file_name, content=None):
 if __name__ == "__main__":
     from rq import Worker
     from workers.queue import redis_conn
-    
+    from workers.queue import queue
+    from storage.minio_client import get_file
+
     print("Starting RQ worker for document ingestion...")
+    
+    # --- AUTO-RESUME ABORTED JOBS ---
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT file_name FROM ingestion_jobs WHERE status != 'done'")
+        for row in cur.fetchall():
+            aborted_file = row[0]
+            print(f"🔄 Auto-resuming interrupted job: {aborted_file}")
+            try:
+                content = get_file(aborted_file).decode("utf-8", errors="ignore")
+                queue.enqueue("workers.ingest_worker.process_file", aborted_file, content)
+            except Exception as e:
+                print(f"Failed to load {aborted_file} from Minio: {e}")
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"Failed to check for aborted jobs: {e}")
+    # --------------------------------
+
     worker = Worker(['openui_ingestion'], connection=redis_conn)
     worker.work()
