@@ -13,13 +13,34 @@ from database.db import get_conn
 llm = LLMService()
 
 
-def build_cache_key(query: str, knowledge_id: str = None, file_id: str = None):
-    key_str = f"{query}:{knowledge_id}:{file_id}" if file_id else (f"{query}:{knowledge_id}" if knowledge_id else query)
+def build_cache_key(query: str, knowledge_id: str = None, file_id: str = None, system_prompt: str = None, history: list = None, user_id: str = None):
+    key_str = f"user_{user_id}:{query}:{knowledge_id}:{file_id}:{system_prompt}"
+    if history:
+        # Just hash the string representation of history to ensure uniqueness
+        key_str += f":{str(history)}"
     return hashlib.md5(key_str.encode()).hexdigest()
 
 
-async def retrieve_context_docs(query: str, top_k: int = 5, knowledge_id: str = None, file_id: str = None):
+async def retrieve_context_docs(query: str, top_k: int = 5, knowledge_id: str = None, file_id: str = None, model: str = "gemma3:latest"):
     top_docs = []
+
+    # 0. Self-RAG Router: Let LLM decide if retrieval is needed
+    router_prompt = f"""You are a routing assistant. Your ONLY job is to decide if the following user query requires searching an external knowledge base or database for facts, context, or code.
+If it is a simple greeting, conversational phrase, or a general question that requires NO external facts, reply with exactly the word "NO".
+If it asks about specific data, logs, code, facts, files, or technical concepts that might be in a document, reply with exactly the word "YES".
+
+User Query: "{query}"
+Decision (YES/NO):"""
+    try:
+        router_llm = LLMService(model=model)
+        router_res = await router_llm.generate(router_prompt)
+        answer = router_res.get("response", "").strip().lower()
+        if "no" in answer and "yes" not in answer:
+            print(f"[Self-RAG] Skipping retrieval for query: '{query}'")
+            return top_docs, query
+        print(f"[Self-RAG] Proceeding with retrieval for query: '{query}'")
+    except Exception as e:
+        print(f"Self-RAG Router Error: {e}")
 
     # 1. If knowledge_id is provided, perform search specifically on the files in that collection
     if knowledge_id:
@@ -140,25 +161,50 @@ async def retrieve_context_docs(query: str, top_k: int = 5, knowledge_id: str = 
     return top_docs, query
 
 
-async def ask(query: str, top_k: int = 5, model: str = "gemma3:latest", knowledge_id: str = None, file_id: str = None, system_prompt: str = None, history: list = None):
-    cache_key = build_cache_key(query, knowledge_id, file_id)
+async def ask(query: str, top_k: int = 5, model: str = "gemma3:latest", knowledge_id: str = None, file_id: str = None, system_prompt: str = None, history: list = None, user_id: str = None):
+    cache_key = build_cache_key(query, knowledge_id, file_id, system_prompt, history, user_id)
 
     cached = cache_get(cache_key)
     if cached:
         return json.loads(cached)
 
-    top_docs, corrected_query = await retrieve_context_docs(query, top_k, knowledge_id, file_id)
+    top_docs, corrected_query = await retrieve_context_docs(query, top_k, knowledge_id, file_id, model=model)
     
     # Deduplicate filenames for context preamble
     unique_filenames = list(dict.fromkeys(d["id"] for d in top_docs))
     context = ""
     for d in top_docs:
-        context += f"Source: {d['id']}\n{d['chunk']}\n\n"
+        chunk_text = d['chunk']
+        if chunk_text.startswith("FILE_REFERENCE:["):
+            import re
+            match = re.search(r"FILE_REFERENCE:\[(.*?)\]", chunk_text)
+            if match:
+                ref_filename = match.group(1)
+                try:
+                    from storage.minio_client import get_file
+                    file_bytes = get_file(ref_filename)
+                    minio_content = file_bytes.decode("utf-8", errors="ignore")
+                    chunk_text = f"--- Content from {ref_filename} ---\n{minio_content}"
+                except Exception as e:
+                    print(f"Failed to lazy load {ref_filename} from Minio: {e}")
+                    
+        context += f"Source: {d['id']}\n{chunk_text}\n\n"
 
     # 4. prompt
-    prompt = "You are a helpful assistant. Use the provided context to answer the question if it is relevant. If the context does not contain the answer, rely on your general knowledge to assist the user.\n\n"
+    prompt = ""
+    if not system_prompt:
+        if context:
+            prompt += "You are a helpful assistant. Use the provided context to answer the question if it is relevant. If the context does not contain the answer, rely on your general knowledge to assist the user.\n\n"
+        else:
+            prompt += "You are a helpful assistant.\n\n"
+    elif not context:
+        prompt += "System Note: No context documents were found or needed for this query. You MUST ignore any instructions in your system prompt that tell you to say 'Not found in provided context' or to refuse answering. Respond to the user conversationally using your general knowledge.\n\n"
+            
     if context:
-        prompt += f"Context:\n{context}\n\n"
+        if not system_prompt or "{context}" not in system_prompt:
+            prompt += f"Context:\n{context}\n\n"
+        if system_prompt:
+            prompt += "System Note: Answer the user's question fully using your own general knowledge. You MUST NOT restrict your answer to just summarizing the context. Provide a complete, helpful, general answer first, and only mention the context as an extra resource.\n\n"
     
     if history:
         prompt += "Conversation history:\n"
@@ -206,8 +252,8 @@ async def ask(query: str, top_k: int = 5, model: str = "gemma3:latest", knowledg
     return result
 
 
-async def ask_stream(query: str, top_k: int = 5, model: str = "gemma3:latest", knowledge_id: str = None, file_id: str = None, system_prompt: str = None, history: list = None):
-    cache_key = build_cache_key(query, knowledge_id, file_id)
+async def ask_stream(query: str, top_k: int = 5, model: str = "gemma3:latest", knowledge_id: str = None, file_id: str = None, system_prompt: str = None, history: list = None, user_id: str = None):
+    cache_key = build_cache_key(query, knowledge_id, file_id, system_prompt, history, user_id)
 
     cached = cache_get(cache_key)
     if cached:
@@ -220,16 +266,27 @@ async def ask_stream(query: str, top_k: int = 5, model: str = "gemma3:latest", k
         }
         return
 
-    top_docs, corrected_query = await retrieve_context_docs(query, top_k, knowledge_id, file_id)
+    top_docs, corrected_query = await retrieve_context_docs(query, top_k, knowledge_id, file_id, model=model)
     
     unique_filenames = list(dict.fromkeys(d["id"] for d in top_docs))
     context = ""
     for d in top_docs:
         context += f"Source: {d['id']}\n{d['chunk']}\n\n"
 
-    prompt = "You are a helpful assistant. Use the provided context to answer the question if it is relevant. If the context does not contain the answer, rely on your general knowledge to assist the user.\n\n"
+    prompt = ""
+    if not system_prompt:
+        if context:
+            prompt += "You are a helpful assistant. Use the provided context to answer the question if it is relevant. If the context does not contain the answer, rely on your general knowledge to assist the user.\n\n"
+        else:
+            prompt += "You are a helpful assistant.\n\n"
+    elif not context:
+        prompt += "System Note: No context documents were found or needed for this query. You MUST ignore any instructions in your system prompt that tell you to say 'Not found in provided context' or to refuse answering. Respond to the user conversationally using your general knowledge.\n\n"
+            
     if context:
-        prompt += f"Context:\n{context}\n\n"
+        if not system_prompt or "{context}" not in system_prompt:
+            prompt += f"Context:\n{context}\n\n"
+        if system_prompt:
+            prompt += "System Note: Answer the user's question fully using your own general knowledge. You MUST NOT restrict your answer to just summarizing the context. Provide a complete, helpful, general answer first, and only mention the context as an extra resource.\n\n"
     
     if history:
         prompt += "Conversation history:\n"

@@ -39,6 +39,7 @@ class ChatRequest(BaseModel):
     system_prompt: Optional[str] = None
     stream: bool = False
     history: Optional[List[ChatMessage]] = None
+    thread_id: Optional[str] = None
 
 def resolve_model(model_id: str) -> tuple[str, Optional[str], Optional[str]]:
     # If the model_id is already one of the base Ollama models, use it directly
@@ -143,6 +144,9 @@ async def chat(req: ChatRequest, current_user: dict = Depends(get_current_user))
 
     # Use request's knowledge_id if provided, otherwise use the model's preset knowledge_id
     final_knowledge_id = req.knowledge_id if req.knowledge_id else preset_knowledge_id
+    
+    user_id = str(current_user.get("sub", ""))
+    print(f"\n[Chat] Request for user_id: {user_id} | thread_id: {req.thread_id} | query: '{req.query}'")
 
     if req.stream:
         from fastapi.responses import StreamingResponse
@@ -151,7 +155,7 @@ async def chat(req: ChatRequest, current_user: dict = Depends(get_current_user))
             import asyncio
             if req.use_rag or final_knowledge_id:
                 from services.rag_service import ask_stream
-                gen = ask_stream(req.query, req.top_k, resolved_model, final_knowledge_id, file_id=req.file_id, system_prompt=final_system_prompt, history=req.history)
+                gen = ask_stream(req.query, req.top_k, resolved_model, final_knowledge_id, file_id=req.file_id, system_prompt=final_system_prompt, history=req.history, user_id=user_id)
             else:
                 llm = LLMService(model=resolved_model)
                 final_query = req.query
@@ -191,7 +195,7 @@ async def chat(req: ChatRequest, current_user: dict = Depends(get_current_user))
         return StreamingResponse(stream_generator(), media_type="text/event-stream")
 
     if req.use_rag or final_knowledge_id:
-        return await ask(req.query, req.top_k, resolved_model, final_knowledge_id, file_id=req.file_id, system_prompt=final_system_prompt, history=req.history)
+        return await ask(req.query, req.top_k, resolved_model, final_knowledge_id, file_id=req.file_id, system_prompt=final_system_prompt, history=req.history, user_id=user_id)
     import httpx
     try:
         llm = LLMService(model=resolved_model)
