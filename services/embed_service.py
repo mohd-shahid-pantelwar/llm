@@ -13,7 +13,7 @@ def embed(texts):
                 "model": "nomic-embed-text",
                 "prompt": t
             },
-            timeout=60.0
+            timeout=300.0
         )
         embeddings.append(res.json()["embedding"])
 
@@ -23,7 +23,7 @@ import httpx
 
 async def async_embed(texts):
     embeddings = []
-    async with httpx.AsyncClient(timeout=120.0) as client:
+    async with httpx.AsyncClient(timeout=300.0) as client:
         for t in texts:
             res = await client.post(
                 f"{OLLAMA_URL}/api/embeddings",

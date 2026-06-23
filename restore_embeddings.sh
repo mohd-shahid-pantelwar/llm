@@ -2,7 +2,7 @@
 
 echo "Starting Global Knowledge Base embedding restoration..."
 
-docker exec rag-api python -c '
+python -c '
 import psycopg2
 from redis import Redis
 from rq import Queue

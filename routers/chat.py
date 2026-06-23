@@ -163,20 +163,29 @@ async def chat(req: ChatRequest, current_user: dict = Depends(get_current_user))
 User Query: "{req.query}"
 
 Instructions:
-1. If the user explicitly asks to "execute the tool", "fetch logs", "pull updates", or "run the fetcher", reply with EXACTLY the tool ID.
-2. If the user is just asking you to "analyze", "summarize", or answer a question about the logs/data they already have (e.g. "show me AppArmor events"), you MUST reply with exactly "NO" so they can query the existing database instead!
-3. Only trigger the tool if you are absolutely sure they want to ingest NEW data from the servers.
+1. VERY IMPORTANT: You must default to replying "NO" for 99% of queries!
+2. If the user asks you to analyze, summarize, or answer a question about events/logs (e.g. "show me the AppArmor Denied events", "what is..."), you MUST reply EXACTLY "NO".
+3. ONLY reply with the "soc-tool" ID if the user EXPLICITLY asks to "fetch NEW logs", "pull updates", or "run the script".
+4. ONLY reply with the "agent-inventory-tool" ID if the user explicitly asks to "list all agents", "show registered agents", or "get complete agent inventory".
+5. DO NOT explain your reasoning. Just output "NO" or the tool ID.
 
 Decision:"""
         try:
+            # Always use a stronger/faster base model for routing instead of a weak finetune if possible, but resolved_model is what we have
             tool_llm = LLMService(model=resolved_model)
             tool_res = await tool_llm.generate(tool_prompt)
             tool_answer = tool_res.get("response", "").strip()
             print(f"🤖 [Tool Router] LLM Decision: '{tool_answer}'")
             
-            for t in selected_tools:
-                if t['id'].lower() in tool_answer.lower():
-                    print(f"🤖 [Agent] User requested tool {t['id']}, executing natively via workspace API...")
+            tool_answer_lower = tool_answer.lower()
+            # Strict check to avoid "I will not use soc-tool" triggering it
+            if "no" in tool_answer_lower.split() or "no." in tool_answer_lower.split() or tool_answer_lower == "no":
+                pass # Explicitly denied
+            else:
+                for t in selected_tools:
+                    tool_id_lower = t['id'].lower()
+                    if tool_id_lower == tool_answer_lower or tool_id_lower in tool_answer_lower.split():
+                        print(f"🤖 [Agent] User requested tool {t['id']}, executing natively via workspace API...")
                     # Get the JWT token from the original request to authenticate the tool call
                     auth_header = req.model  # Not available directly, let's execute natively via DB!
                     
@@ -279,6 +288,18 @@ Decision:"""
                         break
             except Exception as e:
                 yield f"data: {json.dumps({'answer': f'⚠️ Error: {str(e)}', 'done': True, 'stats': {}, 'sources': []})}\n\n"
+            finally:
+                if 'task' in locals() and task is not None and not task.done():
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+                if hasattr(gen, 'aclose'):
+                    try:
+                        await gen.aclose()
+                    except Exception:
+                        pass
 
         return StreamingResponse(stream_generator(), media_type="text/event-stream")
 

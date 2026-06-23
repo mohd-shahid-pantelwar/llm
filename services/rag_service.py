@@ -217,8 +217,6 @@ async def ask(query: str, top_k: int = 5, model: str = "gemma3:latest", knowledg
     if context:
         if not system_prompt or "{context}" not in system_prompt:
             prompt += f"Context:\n{context}\n\n"
-        if system_prompt:
-            prompt += "System Note: Answer the user's question fully using your own general knowledge. You MUST NOT restrict your answer to just summarizing the context. Provide a complete, helpful, general answer first, and only mention the context as an extra resource.\n\n"
     
     if history:
         prompt += "Conversation history:\n"
@@ -327,8 +325,6 @@ async def ask_stream(query: str, top_k: int = 5, model: str = "gemma3:latest", k
     if context:
         if not system_prompt or "{context}" not in system_prompt:
             prompt += f"Context:\n{context}\n\n"
-        if system_prompt:
-            prompt += "System Note: Answer the user's question fully using your own general knowledge. You MUST NOT restrict your answer to just summarizing the context. Provide a complete, helpful, general answer first, and only mention the context as an extra resource.\n\n"
     
     if history:
         prompt += "Conversation history:\n"
