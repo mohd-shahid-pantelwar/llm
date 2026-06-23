@@ -195,7 +195,7 @@ async def ask(query: str, top_k: int = 5, model: str = "gemma3:latest", knowledg
                         if not cur.fetchone():
                             print(f"[rag-api] ♻️ Queueing Lazy-Loaded bucket {ref_filename} for permanent Vector DB embedding...")
                             from workers.queue import queue
-                            queue.enqueue("workers.ingest_worker.process_file", ref_filename)
+                            queue.enqueue("workers.ingest_worker.process_file", ref_filename, job_timeout="2h")
                         conn.close()
                     except Exception as q_err:
                         print(f"Failed to queue lazy loaded file for embedding: {q_err}")
@@ -304,7 +304,7 @@ async def ask_stream(query: str, top_k: int = 5, model: str = "gemma3:latest", k
                         if not cur.fetchone():
                             print(f"[rag-api] ♻️ Queueing Lazy-Loaded bucket {ref_filename} for permanent Vector DB embedding...")
                             from workers.queue import queue
-                            queue.enqueue("workers.ingest_worker.process_file", ref_filename)
+                            queue.enqueue("workers.ingest_worker.process_file", ref_filename, job_timeout="2h")
                         conn.close()
                     except Exception as q_err:
                         print(f"Failed to queue lazy loaded file for embedding: {q_err}")

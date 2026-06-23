@@ -19,7 +19,8 @@ async def upload_file(file_name: UploadFile = File(...)):
         job = queue.enqueue(
             "workers.ingest_worker.process_file",
             unique_filename,
-            text
+            text,
+            job_timeout="2h"
         )
         
         return {"status": "queued", "job_id": job.id, "file_id": unique_filename}

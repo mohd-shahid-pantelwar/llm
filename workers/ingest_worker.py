@@ -60,7 +60,7 @@ def process_file(file_name, content=None):
 
         return "done"
 
-    except Exception as e:
+    except BaseException as e:
         conn.rollback()
 
         cur.execute(
@@ -93,7 +93,7 @@ if __name__ == "__main__":
             print(f"🔄 Auto-resuming interrupted job: {aborted_file}")
             try:
                 content = get_file(aborted_file).decode("utf-8", errors="ignore")
-                queue.enqueue("workers.ingest_worker.process_file", aborted_file, content)
+                queue.enqueue("workers.ingest_worker.process_file", aborted_file, content, job_timeout="2h")
             except Exception as e:
                 print(f"Failed to load {aborted_file} from Minio: {e}")
         cur.close()

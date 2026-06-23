@@ -34,6 +34,18 @@ class UserUpdate(BaseModel):
     role: str
     password: str = None
 
+@router.get("/me")
+async def get_me(current_user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT id, name, email, role, status FROM users WHERE id = %s", (current_user["id"],))
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"id": row[0], "name": row[1], "email": row[2], "role": row[3], "status": row[4]}
+
 @router.get("/")
 async def get_users(admin: dict = Depends(get_admin_user)):
     conn = get_conn()
