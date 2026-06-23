@@ -1,9 +1,76 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
 from workers.queue import queue
 from storage.minio_client import upload_file as minio_upload
+from database.db import get_conn
 import uuid
+import json
+import time
+from datetime import datetime
+import redis
+from pydantic import BaseModel
+
+from routers.users import get_admin_user
 
 router = APIRouter(prefix="/api")
+
+class DocumentSettings(BaseModel):
+    chunkSize: str
+    chunkOverlap: str
+    pdfExtractionEngine: str
+    embeddingModel: str
+    embeddingUrl: str
+    embeddingKey: str
+    topK: str
+    ragTemplate: str
+
+@router.post("/admin/settings/documents")
+async def save_document_settings(settings: DocumentSettings, admin: dict = Depends(get_admin_user)):
+    try:
+        r = redis.Redis(host=os.environ.get("REDIS_HOST", "10.0.10.131"), port=int(os.environ.get("REDIS_PORT", 6379)), decode_responses=True)
+        r.set("admin:settings:embeddingModel", settings.embeddingModel)
+        r.set("admin:settings:chunkSize", settings.chunkSize)
+        r.set("admin:settings:chunkOverlap", settings.chunkOverlap)
+        r.set("admin:settings:topK", settings.topK)
+        r.set("admin:settings:ragTemplate", settings.ragTemplate)
+        if settings.embeddingUrl:
+            r.set("admin:settings:embeddingUrl", settings.embeddingUrl)
+        if settings.embeddingKey:
+            r.set("admin:settings:embeddingKey", settings.embeddingKey)
+            
+        return {"status": "success", "message": "Settings saved to Redis"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/admin/reindex")
+async def reindex_vector_db(admin: dict = Depends(get_admin_user)):
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        
+        # 1. Wipe vector db and reset jobs
+        cur.execute("DELETE FROM documents")
+        cur.execute("UPDATE ingestion_jobs SET status='pending', chunks_processed=0, error=NULL")
+        
+        # 2. Re-queue all files
+        cur.execute("SELECT file_name FROM ingestion_jobs")
+        rows = cur.fetchall()
+        
+        for r in rows:
+            file_name = r[0]
+            # Enqueue the job without text, process_file will fetch from minio
+            queue.enqueue(
+                "workers.ingest_worker.process_file",
+                file_name,
+                job_timeout="2h"
+            )
+            
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+        return {"status": "success", "message": f"Wiped DB and queued {len(rows)} files for reindexing."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/upload")
 async def upload_file(file_name: UploadFile = File(...)):
