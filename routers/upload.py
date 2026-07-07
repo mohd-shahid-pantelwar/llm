@@ -2,6 +2,7 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
 from workers.queue import queue
 from storage.minio_client import upload_file as minio_upload
 from database.db import get_conn
+import os
 import uuid
 import json
 import time
