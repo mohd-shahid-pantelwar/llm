@@ -3,6 +3,8 @@ import requests
 import os
 import redis
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://10.0.10.131:11434")
+OLLAMA_KEEP_ALIVE = os.environ.get("OLLAMA_KEEP_ALIVE", "30m")
+OLLAMA_NUM_THREAD = int(os.environ.get("OLLAMA_NUM_THREAD", "8"))
 
 r = redis.Redis(host=os.environ.get("REDIS_HOST", "10.0.10.131"), port=int(os.environ.get("REDIS_PORT", 6379)), decode_responses=True)
 
@@ -18,7 +20,9 @@ def embed(texts):
             f"{OLLAMA_URL}/api/embeddings",
             json={
                 "model": active_model,
-                "prompt": t
+                "prompt": t,
+                "keep_alive": OLLAMA_KEEP_ALIVE,
+                "options": {"num_thread": OLLAMA_NUM_THREAD}
             },
             timeout=300.0
         )
@@ -40,7 +44,9 @@ async def async_embed(texts):
                 f"{OLLAMA_URL}/api/embeddings",
                 json={
                     "model": active_model,
-                    "prompt": t
+                    "prompt": t,
+                    "keep_alive": OLLAMA_KEEP_ALIVE,
+                    "options": {"num_thread": OLLAMA_NUM_THREAD}
                 }
             )
             res.raise_for_status()

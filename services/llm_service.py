@@ -3,6 +3,10 @@ import json
 
 import os
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://10.0.10.131:11434")
+# Keep the model resident between requests to avoid reload spikes, and cap
+# inference threads so Ollama doesn't starve Postgres/Redis on the same host.
+OLLAMA_KEEP_ALIVE = os.environ.get("OLLAMA_KEEP_ALIVE", "30m")
+OLLAMA_NUM_THREAD = int(os.environ.get("OLLAMA_NUM_THREAD", "8"))
 
 
 class LLMService:
@@ -19,7 +23,9 @@ class LLMService:
             payload = {
                 "model": self.model,
                 "prompt": final_prompt,
-                "stream": False
+                "stream": False,
+                "keep_alive": OLLAMA_KEEP_ALIVE,
+                "options": {"num_thread": OLLAMA_NUM_THREAD}
             }
             res = await client.post(
                 f"{OLLAMA_URL}/api/generate",
@@ -50,7 +56,9 @@ class LLMService:
             payload = {
                 "model": self.model,
                 "prompt": final_prompt,
-                "stream": True
+                "stream": True,
+                "keep_alive": OLLAMA_KEEP_ALIVE,
+                "options": {"num_thread": OLLAMA_NUM_THREAD}
             }
             
             async with client.stream("POST", f"{OLLAMA_URL}/api/generate", json=payload) as response:

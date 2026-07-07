@@ -2,6 +2,8 @@ import httpx
 
 import os
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://10.0.10.131:11434")
+OLLAMA_KEEP_ALIVE = os.environ.get("OLLAMA_KEEP_ALIVE", "30m")
+OLLAMA_NUM_THREAD = int(os.environ.get("OLLAMA_NUM_THREAD", "8"))
 
 
 async def stream_llm_response(prompt: str, model="gemma3:latest"):
@@ -13,7 +15,9 @@ async def stream_llm_response(prompt: str, model="gemma3:latest"):
             json={
                 "model": model,
                 "prompt": prompt,
-                "stream": True
+                "stream": True,
+                "keep_alive": OLLAMA_KEEP_ALIVE,
+                "options": {"num_thread": OLLAMA_NUM_THREAD}
             }
         ) as res:
 
