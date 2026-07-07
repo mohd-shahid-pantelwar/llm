@@ -9,7 +9,13 @@ from database.db import get_conn
 router = APIRouter(prefix="/api")
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-SECRET_KEY = os.getenv("WEBUI_SECRET_KEY", "my_super_secret_key_for_openwebui")
+SECRET_KEY = os.getenv("WEBUI_SECRET_KEY")
+if not SECRET_KEY:
+    print(
+        "WARNING: WEBUI_SECRET_KEY is not set — falling back to a publicly known "
+        "default. Anyone can forge admin tokens. Set it in .env (openssl rand -hex 32)."
+    )
+    SECRET_KEY = "my_super_secret_key_for_openwebui"
 ALGORITHM = "HS256"
 
 # Configuration flag matching open_webui design

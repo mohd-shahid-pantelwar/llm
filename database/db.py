@@ -8,7 +8,7 @@ def get_conn():
         dbname=os.environ.get("DB_NAME", "rag"),
         user=os.environ.get("DB_USER", "openwebui"),
         password=os.environ.get("DB_PASSWORD", "openwebui"),
-        host=os.environ.get("DB_HOST", "10.0.10.131"),
+        host=os.environ.get("DB_HOST", "localhost"),
         port=5432
     )
 

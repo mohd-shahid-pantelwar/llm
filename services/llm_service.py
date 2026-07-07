@@ -2,7 +2,7 @@ import httpx
 import json
 
 import os
-OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://10.0.10.131:11434")
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 # Keep the model resident between requests to avoid reload spikes, and cap
 # inference threads so Ollama doesn't starve Postgres/Redis on the same host.
 OLLAMA_KEEP_ALIVE = os.environ.get("OLLAMA_KEEP_ALIVE", "30m")

@@ -3,7 +3,7 @@ import psycopg2
 import json
 
 # Fetch tool code and valves
-db_host = os.environ.get("POSTGRES_HOST", "10.0.10.131")
+db_host = os.environ.get("POSTGRES_HOST", "localhost")
 db_user = os.environ.get("POSTGRES_USER", "openwebui")
 db_pass = os.environ.get("POSTGRES_PASSWORD", "openwebui")
 db_name = os.environ.get("POSTGRES_DB", "rag")

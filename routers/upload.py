@@ -24,21 +24,36 @@ class DocumentSettings(BaseModel):
     topK: str
     ragTemplate: str
 
+def get_redis():
+    return redis.Redis(host=os.environ.get("REDIS_HOST", "localhost"), port=int(os.environ.get("REDIS_PORT", 6379)), decode_responses=True)
+
 @router.post("/admin/settings/documents")
 async def save_document_settings(settings: DocumentSettings, admin: dict = Depends(get_admin_user)):
     try:
-        r = redis.Redis(host=os.environ.get("REDIS_HOST", "10.0.10.131"), port=int(os.environ.get("REDIS_PORT", 6379)), decode_responses=True)
+        r = get_redis()
         r.set("admin:settings:embeddingModel", settings.embeddingModel)
         r.set("admin:settings:chunkSize", settings.chunkSize)
         r.set("admin:settings:chunkOverlap", settings.chunkOverlap)
         r.set("admin:settings:topK", settings.topK)
         r.set("admin:settings:ragTemplate", settings.ragTemplate)
+        r.set("admin:settings:pdfExtractionEngine", settings.pdfExtractionEngine)
         if settings.embeddingUrl:
             r.set("admin:settings:embeddingUrl", settings.embeddingUrl)
         if settings.embeddingKey:
             r.set("admin:settings:embeddingKey", settings.embeddingKey)
-            
+
         return {"status": "success", "message": "Settings saved to Redis"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/admin/settings/documents")
+async def get_document_settings(admin: dict = Depends(get_admin_user)):
+    try:
+        r = get_redis()
+        keys = ["embeddingModel", "chunkSize", "chunkOverlap", "topK", "ragTemplate", "embeddingUrl", "pdfExtractionEngine"]
+        # embeddingKey is intentionally omitted: never echo the secret back to the UI.
+        # The save endpoint only overwrites it when a non-empty value is submitted.
+        return {k: r.get(f"admin:settings:{k}") for k in keys}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -3,7 +3,7 @@ from minio import Minio
 import io
 
 client = Minio(
-    os.environ.get("MINIO_URL", "10.0.10.131:9000"),
+    os.environ.get("MINIO_URL", "localhost:9000"),
     access_key=os.environ.get("MINIO_ACCESS_KEY", "minioadmin"),
     secret_key=os.environ.get("MINIO_SECRET_KEY", "minioadmin"),
     secure=False
