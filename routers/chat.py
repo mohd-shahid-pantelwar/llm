@@ -34,6 +34,7 @@ class ChatRequest(BaseModel):
     top_k: int = 5
     model: str
     use_rag: bool = False
+    use_web_search: bool = False
     knowledge_id: Optional[str] = None
     file_id: Optional[str] = None
     system_prompt: Optional[str] = None
@@ -44,7 +45,7 @@ class ChatRequest(BaseModel):
 def resolve_model(model_id: str) -> tuple[str, Optional[str], Optional[str]]:
     # If the model_id is already one of the base Ollama models, use it directly
     if model_id in ["gemma3:latest", "llama3:latest"]:
-        return model_id, None, None
+        return model_id, None, None, []
 
     try:
         conn = get_conn()
@@ -144,6 +145,16 @@ async def chat(req: ChatRequest, current_user: dict = Depends(get_current_user))
     else:
         final_system_prompt = preset_system_prompt
 
+    # Admin-configured global system prompt applies to every chat, ahead of
+    # any per-request or per-model prompt.
+    try:
+        from database.redis import r as _redis
+        global_prompt = _redis.get("admin:settings:globalSystemPrompt")
+    except Exception:
+        global_prompt = None
+    if global_prompt:
+        final_system_prompt = f"{global_prompt}\n\n{final_system_prompt}" if final_system_prompt else global_prompt
+
     # Use request's knowledge_id if provided, otherwise use the model's preset knowledge_id
     final_knowledge_id = req.knowledge_id if req.knowledge_id else preset_knowledge_id
     
@@ -156,7 +167,6 @@ async def chat(req: ChatRequest, current_user: dict = Depends(get_current_user))
     # 3. Tool Routing Agent
     if selected_tools:
         import httpx
-        from services.llm_service import LLMService
         tool_prompt = f"""You are a tool-routing assistant. The user has access to the following tools:
 {json.dumps([{'name': t['title'], 'description': t['description'], 'id': t['id']} for t in selected_tools])}
 
@@ -245,9 +255,25 @@ Decision:"""
         except Exception as e:
             print(f"Tool Router Error: {e}")
 
+    # 4. Web search: inject results as context ahead of generation
+    web_sources = []
+    if req.use_web_search:
+        import asyncio as _asyncio
+        from services.web_search import search_web, format_results_for_prompt, results_as_sources
+        results, search_error = await _asyncio.to_thread(search_web, req.query)
+        if search_error:
+            print(f"[Web Search] {search_error}")
+        if results:
+            print(f"[Web Search] {len(results)} results for: '{req.query}'")
+            web_sources = results_as_sources(results)
+            web_msg = ChatMessage(sender="system", content=format_results_for_prompt(results))
+            if req.history is None:
+                req.history = []
+            req.history.append(web_msg)
+
     if req.stream:
         from fastapi.responses import StreamingResponse
-        
+
         async def stream_generator():
             import asyncio
             if (req.use_rag or final_knowledge_id or "soc" in req.model.lower()) and not tool_executed:
@@ -278,7 +304,7 @@ Decision:"""
                         if done:
                             chunk = task.result()
                             task = None  # Reset task for the next chunk
-                            yield f"data: {json.dumps({'answer': chunk.get('response', ''), 'done': chunk.get('done', False), 'stats': chunk.get('stats', {}), 'sources': chunk.get('sources', [])})}\n\n"
+                            yield f"data: {json.dumps({'answer': chunk.get('response', ''), 'done': chunk.get('done', False), 'stats': chunk.get('stats', {}), 'sources': web_sources + chunk.get('sources', [])})}\n\n"
                             if chunk.get('done'):
                                 break
                         else:
@@ -304,7 +330,10 @@ Decision:"""
         return StreamingResponse(stream_generator(), media_type="text/event-stream")
 
     if req.use_rag or final_knowledge_id or "soc" in req.model.lower():
-        return await ask(req.query, req.top_k, resolved_model, final_knowledge_id, file_id=req.file_id, system_prompt=final_system_prompt, history=req.history, user_id=user_id)
+        result = await ask(req.query, req.top_k, resolved_model, final_knowledge_id, file_id=req.file_id, system_prompt=final_system_prompt, history=req.history, user_id=user_id)
+        if web_sources and isinstance(result, dict):
+            result["sources"] = web_sources + (result.get("sources") or [])
+        return result
     
     import httpx
     try:
@@ -313,7 +342,7 @@ Decision:"""
         if req.history:
             prompt_with_history = "Conversation history:\n"
             for msg in req.history:
-                role = "User" if msg.sender == "user" else "Assistant"
+                role = "System" if msg.sender == "system" else ("User" if msg.sender == "user" else "Assistant")
                 prompt_with_history += f"{role}: {msg.content}\n"
             prompt_with_history += f"\nQuestion:\n{req.query}"
             final_query = prompt_with_history
@@ -322,7 +351,7 @@ Decision:"""
             "query": req.query,
             "answer": res_data.get("response", ""),
             "stats": res_data.get("stats", {}),
-            "sources": []
+            "sources": web_sources
         }
     except httpx.HTTPStatusError as e:
         from fastapi import HTTPException
