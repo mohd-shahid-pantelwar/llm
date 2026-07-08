@@ -4,7 +4,7 @@ import numpy as np
 from typing import List
 
 from retrieval.search import hybrid_search
-from database.redis import cache_get, cache_set
+from database.redis import cache_get, cache_set, r as redis_client
 from services.embed_service import embed, async_embed
 from services.llm_service import LLMService
 from retrieval.rerank import rerank
@@ -21,8 +21,69 @@ def build_cache_key(query: str, knowledge_id: str = None, file_id: str = None, s
     return hashlib.md5(key_str.encode()).hexdigest()
 
 
+def get_min_score() -> float:
+    # Minimum cosine similarity for a chunk to count as relevant.
+    # Admin-configurable; below this, chunks are noise that pollutes the prompt.
+    try:
+        return float(redis_client.get("admin:settings:minScore") or 0.6)
+    except Exception:
+        return 0.6
+
+
+async def web_fallback(query: str):
+    """Nothing relevant in local knowledge: search the web and cache the
+    results into the vector store so the next similar query hits locally."""
+    if (redis_client.get("admin:settings:webFallback") or "true").lower() != "true":
+        return []
+    import asyncio
+    from services.web_search import search_web
+
+    results, err = await asyncio.to_thread(search_web, query)
+    if err:
+        print(f"[Web Fallback] {err}")
+        return []
+    if not results:
+        return []
+
+    chunks = [f"{res['title']}\n{res['snippet']}\nSource: {res['url']}" for res in results]
+    try:
+        embs = await async_embed(chunks)
+        ttl_days = int(redis_client.get("admin:settings:webCacheTTLDays") or 7)
+        conn = get_conn()
+        cur = conn.cursor()
+        # Expire stale cached web content so outdated facts don't linger
+        cur.execute(
+            "DELETE FROM documents WHERE source IS NOT NULL AND cached_at < NOW() - (%s || ' days')::interval",
+            (str(ttl_days),),
+        )
+        for chunk, emb, res in zip(chunks, embs, results):
+            cur.execute(
+                "INSERT INTO documents (chunk, embedding, content_tsv, source, cached_at) VALUES (%s, %s::vector, to_tsvector('english', %s), %s, NOW())",
+                (chunk, emb, chunk, res["url"]),
+            )
+        conn.commit()
+        cur.close()
+        conn.close()
+        print(f"[Web Fallback] cached {len(results)} web results into vector store")
+    except Exception as e:
+        print(f"[Web Fallback] caching failed (answering from live results): {e}")
+
+    return [
+        {"id": res["url"], "chunk": chunk, "score": 1.0}
+        for chunk, res in zip(chunks, results)
+    ]
+
+
 async def retrieve_context_docs(query: str, top_k: int = 5, knowledge_id: str = None, file_id: str = None, model: str = "gemma3:latest"):
     top_docs = []
+
+    # Fix query typos against the corpus vocabulary (SymSpell + LSTM) so
+    # both embedding and keyword retrieval see the intended words.
+    try:
+        from services.typo_correction import correct_query as _correct_query
+        query = _correct_query(query)
+    except Exception as e:
+        print(f"[Typo] correction skipped: {e}")
 
     # 0. Self-RAG Router: Let LLM decide if retrieval is needed
     router_prompt = f"""You are a routing assistant. Your ONLY job is to decide if the following user query requires searching an external knowledge base or database for facts, context, or code.
@@ -106,8 +167,7 @@ Decision (YES/NO):"""
                             chunk_embs.append(emb)
 
                 if chunks:
-                    chunk_texts = [c[1] for c in chunks]
-                    query = correct_query_typos(query, chunk_texts)
+                    # (typo correction already applied once at function start)
                     # Compute query embedding
                     q_emb = (await async_embed([query]))[0]
                     q_vec = np.array(q_emb)
@@ -127,10 +187,11 @@ Decision (YES/NO):"""
                     # Sort by score descending
                     scores.sort(key=lambda x: x[1], reverse=True)
 
-                    # Convert to doc format and apply threshold
+                    # Convert to doc format and apply the configurable threshold
+                    min_score = get_min_score()
                     top_docs = []
                     for i, item in enumerate(scores):
-                        if item[1] >= 0.4:
+                        if item[1] >= min_score:
                             top_docs.append({"id": item[0][0], "chunk": item[0][1], "score": item[1]})
                         if len(top_docs) >= top_k:
                             break
@@ -155,9 +216,16 @@ Decision (YES/NO):"""
             for d in docs
         ]
 
-        # rerank
+        # rerank, then drop chunks the cross-encoder judges irrelevant
+        # (ms-marco scores are logits: negative means "not about this query")
         docs = rerank(query, docs)
+        docs = [d for d in docs if d.get("rerank_score", 0) > 0]
         top_docs = docs[:5]
+
+    # 3. Nothing relevant locally: search the web and cache the results,
+    # so the next similar query is answered from the vector store.
+    if not top_docs:
+        top_docs = await web_fallback(query)
 
     return top_docs, query
 

@@ -23,6 +23,9 @@ class DocumentSettings(BaseModel):
     embeddingKey: str
     topK: str
     ragTemplate: str
+    minScore: str = "0.6"
+    webFallback: str = "true"
+    webCacheTTLDays: str = "7"
 
 def get_redis():
     return redis.Redis(host=os.environ.get("REDIS_HOST", "localhost"), port=int(os.environ.get("REDIS_PORT", 6379)), decode_responses=True)
@@ -37,6 +40,9 @@ async def save_document_settings(settings: DocumentSettings, admin: dict = Depen
         r.set("admin:settings:topK", settings.topK)
         r.set("admin:settings:ragTemplate", settings.ragTemplate)
         r.set("admin:settings:pdfExtractionEngine", settings.pdfExtractionEngine)
+        r.set("admin:settings:minScore", settings.minScore)
+        r.set("admin:settings:webFallback", settings.webFallback)
+        r.set("admin:settings:webCacheTTLDays", settings.webCacheTTLDays)
         if settings.embeddingUrl:
             r.set("admin:settings:embeddingUrl", settings.embeddingUrl)
         if settings.embeddingKey:
@@ -50,7 +56,7 @@ async def save_document_settings(settings: DocumentSettings, admin: dict = Depen
 async def get_document_settings(admin: dict = Depends(get_admin_user)):
     try:
         r = get_redis()
-        keys = ["embeddingModel", "chunkSize", "chunkOverlap", "topK", "ragTemplate", "embeddingUrl", "pdfExtractionEngine"]
+        keys = ["embeddingModel", "chunkSize", "chunkOverlap", "topK", "ragTemplate", "embeddingUrl", "pdfExtractionEngine", "minScore", "webFallback", "webCacheTTLDays"]
         # embeddingKey is intentionally omitted: never echo the secret back to the UI.
         # The save endpoint only overwrites it when a non-empty value is submitted.
         return {k: r.get(f"admin:settings:{k}") for k in keys}
