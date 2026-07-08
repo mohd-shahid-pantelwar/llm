@@ -33,7 +33,8 @@ User Query: "{query}"
 Decision (YES/NO):"""
     try:
         router_llm = LLMService(model=model)
-        router_res = await router_llm.generate(router_prompt)
+        # One-word decision: cap output so the router can't ramble
+        router_res = await router_llm.generate(router_prompt, options={"num_predict": 6})
         answer = router_res.get("response", "").strip().lower()
         if "no" in answer and "yes" not in answer:
             print(f"[Self-RAG] Skipping retrieval for query: '{query}'")

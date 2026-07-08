@@ -164,6 +164,14 @@ async def chat(req: ChatRequest, current_user: dict = Depends(get_current_user))
 
     tool_executed = False
 
+    # Kick off web search first so the network I/O overlaps the
+    # tool-routing LLM call below instead of running after it.
+    web_search_task = None
+    if req.use_web_search:
+        import asyncio as _asyncio
+        from services.web_search import search_web
+        web_search_task = _asyncio.create_task(_asyncio.to_thread(search_web, req.query))
+
     # 3. Tool Routing Agent
     if selected_tools:
         import httpx
@@ -183,7 +191,8 @@ Decision:"""
         try:
             # Always use a stronger/faster base model for routing instead of a weak finetune if possible, but resolved_model is what we have
             tool_llm = LLMService(model=resolved_model)
-            tool_res = await tool_llm.generate(tool_prompt)
+            # Decision is one word (NO or a tool id): cap output tokens
+            tool_res = await tool_llm.generate(tool_prompt, options={"num_predict": 12})
             tool_answer = tool_res.get("response", "").strip()
             print(f"🤖 [Tool Router] LLM Decision: '{tool_answer}'")
             
@@ -257,10 +266,9 @@ Decision:"""
 
     # 4. Web search: inject results as context ahead of generation
     web_sources = []
-    if req.use_web_search:
-        import asyncio as _asyncio
-        from services.web_search import search_web, format_results_for_prompt, results_as_sources
-        results, search_error = await _asyncio.to_thread(search_web, req.query)
+    if web_search_task is not None:
+        from services.web_search import format_results_for_prompt, results_as_sources
+        results, search_error = await web_search_task
         if search_error:
             print(f"[Web Search] {search_error}")
         if results:

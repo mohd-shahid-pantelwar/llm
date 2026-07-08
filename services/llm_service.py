@@ -13,7 +13,7 @@ class LLMService:
     def __init__(self, model="gemma3:latest"):
         self.model = model
 
-    async def generate(self, prompt: str, system_prompt: str = None):
+    async def generate(self, prompt: str, system_prompt: str = None, options: dict = None):
         timeout = httpx.Timeout(timeout=None, connect=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
             final_prompt = prompt
@@ -25,7 +25,7 @@ class LLMService:
                 "prompt": final_prompt,
                 "stream": False,
                 "keep_alive": OLLAMA_KEEP_ALIVE,
-                "options": {"num_thread": OLLAMA_NUM_THREAD}
+                "options": {"num_thread": OLLAMA_NUM_THREAD, **(options or {})}
             }
             res = await client.post(
                 f"{OLLAMA_URL}/api/generate",
