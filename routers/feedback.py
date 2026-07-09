@@ -97,6 +97,45 @@ async def create_feedback(
     return {"status": "success", "id": row[0]}
 
 
+# ─── Model leaderboard from collected feedback (admin) ────────────────────────
+
+@router.get("/leaderboard")
+async def feedback_leaderboard(current_user: dict = Depends(get_current_user)):
+    if current_user.get("role", "").upper() != "ADMIN":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT
+            COALESCE(model_name, 'unknown') AS model,
+            COUNT(*) FILTER (WHERE type = 'like') AS likes,
+            COUNT(*) FILTER (WHERE type = 'dislike') AS dislikes,
+            AVG(rating) FILTER (WHERE rating IS NOT NULL) AS avg_rating,
+            COUNT(*) AS total
+        FROM feedback
+        GROUP BY COALESCE(model_name, 'unknown')
+        ORDER BY COUNT(*) DESC
+    """)
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    leaderboard = []
+    for model, likes, dislikes, avg_rating, total in rows:
+        rated = likes + dislikes
+        leaderboard.append({
+            "model": model,
+            "likes": likes,
+            "dislikes": dislikes,
+            "total": total,
+            "avgRating": round(float(avg_rating), 2) if avg_rating is not None else None,
+            "winRate": round(likes / rated, 3) if rated else None,
+        })
+    leaderboard.sort(key=lambda x: (x["winRate"] is not None, x["winRate"] or 0, x["total"]), reverse=True)
+    return leaderboard
+
+
 # ─── List all feedback (admin) ─────────────────────────────────────────────────
 
 @router.get("")

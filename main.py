@@ -1,6 +1,6 @@
 import os
 from fastapi import FastAPI
-from routers import chat, upload, ws_chat, health, models, auth, users, chats, folders, workspace, feedback, notes, admin
+from routers import chat, upload, ws_chat, health, models, auth, users, chats, folders, workspace, feedback, notes, admin, memories, openai_compat
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -35,6 +35,8 @@ app.include_router(workspace.router)
 app.include_router(feedback.router)
 app.include_router(notes.router)
 app.include_router(admin.router)
+app.include_router(memories.router)
+app.include_router(openai_compat.router)
 
 app.add_middleware(
     CORSMiddleware,

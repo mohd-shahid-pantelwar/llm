@@ -34,6 +34,32 @@ class UserUpdate(BaseModel):
     role: str
     password: str = None
 
+@router.post("/me/api-key")
+async def generate_api_key(current_user: dict = Depends(get_current_user)):
+    import secrets
+    api_key = f"sk-vibe-{secrets.token_hex(20)}"
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("UPDATE users SET api_key = %s WHERE id = %s", (api_key, current_user["id"]))
+    conn.commit()
+    cur.close()
+    conn.close()
+    # Returned in full only here; store it — regenerating revokes the old one.
+    return {"api_key": api_key}
+
+
+@router.get("/me/api-key")
+async def api_key_status(current_user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT api_key FROM users WHERE id = %s", (current_user["id"],))
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    key = row[0] if row else None
+    return {"hasKey": bool(key), "preview": f"{key[:11]}…{key[-4:]}" if key else None}
+
+
 @router.get("/me")
 async def get_me(current_user: dict = Depends(get_current_user)):
     conn = get_conn()

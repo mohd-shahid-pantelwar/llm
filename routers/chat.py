@@ -155,6 +155,15 @@ async def chat(req: ChatRequest, current_user: dict = Depends(get_current_user))
     if global_prompt:
         final_system_prompt = f"{global_prompt}\n\n{final_system_prompt}" if final_system_prompt else global_prompt
 
+    # Per-user memories (OpenWebUI-style personalization)
+    try:
+        from routers.memories import get_user_memory_context
+        memory_context = get_user_memory_context(current_user.get("id"))
+    except Exception:
+        memory_context = ""
+    if memory_context:
+        final_system_prompt = f"{final_system_prompt}\n\n{memory_context}" if final_system_prompt else memory_context
+
     # Use request's knowledge_id if provided, otherwise use the model's preset knowledge_id
     final_knowledge_id = req.knowledge_id if req.knowledge_id else preset_knowledge_id
     

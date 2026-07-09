@@ -187,7 +187,10 @@ Decision (YES/NO):"""
                     # Sort by score descending
                     scores.sort(key=lambda x: x[1], reverse=True)
 
-                    # Convert to doc format and apply the configurable threshold
+                    # Convert to doc format and apply the configurable threshold.
+                    # Cosine is only a coarse floor on this corpus (relevant and
+                    # irrelevant chunks both score ~0.65): the cross-encoder
+                    # rerank below is what actually separates them.
                     min_score = get_min_score()
                     top_docs = []
                     for i, item in enumerate(scores):
@@ -195,6 +198,10 @@ Decision (YES/NO):"""
                             top_docs.append({"id": item[0][0], "chunk": item[0][1], "score": item[1]})
                         if len(top_docs) >= top_k:
                             break
+
+                    if top_docs:
+                        top_docs = rerank(query, top_docs)
+                        top_docs = [d for d in top_docs if d.get("rerank_score", 0) > 0]
             except Exception as e:
                 import traceback
                 traceback.print_exc()

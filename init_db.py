@@ -162,7 +162,20 @@ def init_db():
         # password is 'admin' hashed with bcrypt
         # We will use bcrypt to generate this in python but for now we just use a placeholder
         pass
-        
+
+    # Idempotent migrations for existing installs
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS api_key TEXT UNIQUE")
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS user_memories (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+    """)
+    cur.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS source TEXT")
+    cur.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS cached_at TIMESTAMPTZ")
+
     conn.commit()
     cur.close()
     conn.close()
