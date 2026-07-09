@@ -161,7 +161,7 @@ async def delete_model(name: str, admin: dict = Depends(get_admin_user)):
 @router.post("/admin/typo/train")
 async def train_typo_model(admin: dict = Depends(get_admin_user)):
     from services import typo_correction
-    raw = get_redis().get(typo_correction.STATUS_KEY)
+    raw = r.get(typo_correction.STATUS_KEY)
     if raw and json.loads(raw).get("status") in ("building vocabulary", "training"):
         return {"status": "already_training"}
     threading.Thread(target=typo_correction.train, daemon=True).start()
@@ -171,7 +171,7 @@ async def train_typo_model(admin: dict = Depends(get_admin_user)):
 @router.get("/admin/typo/status")
 async def typo_train_status(admin: dict = Depends(get_admin_user)):
     from services.typo_correction import STATUS_KEY
-    raw = get_redis().get(STATUS_KEY)
+    raw = r.get(STATUS_KEY)
     return json.loads(raw) if raw else {"status": "not_trained"}
 
 
