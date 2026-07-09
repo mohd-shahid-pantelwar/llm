@@ -165,6 +165,7 @@ def init_db():
 
     # Idempotent migrations for existing installs
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS api_key TEXT UNIQUE")
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()")
     cur.execute("""
         CREATE TABLE IF NOT EXISTS user_memories (
             id SERIAL PRIMARY KEY,

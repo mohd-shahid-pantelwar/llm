@@ -9,18 +9,34 @@ router = APIRouter(prefix="/api/users")
 def get_current_user(authorization: str = Header(None)):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid token")
-    
+
     token = authorization.split(" ")[1]
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        return payload
     except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
+
+    # Presence tracking: cheap Redis write, read back by the admin users list
+    try:
+        from database.redis import r as _redis
+        import time as _time
+        _redis.set(f"user:lastActive:{payload.get('id')}", int(_time.time()))
+    except Exception:
+        pass
+    return payload
 
 def get_admin_user(current_user: dict = Depends(get_current_user)):
     if current_user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin privileges required")
     return current_user
+
+def get_primary_admin_id(cur) -> int:
+    # The first account ever created is auto-promoted to admin at registration;
+    # that account is the primary admin and its role is immutable.
+    cur.execute("SELECT MIN(id) FROM users")
+    row = cur.fetchone()
+    return row[0] if row else None
+
 
 class UserCreate(BaseModel):
     name: str
@@ -76,13 +92,25 @@ async def get_me(current_user: dict = Depends(get_current_user)):
 async def get_users(admin: dict = Depends(get_admin_user)):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("SELECT id, name, email, role, status FROM users")
-    users = [
-        {"id": r[0], "name": r[1], "email": r[2], "role": r[3], "status": r[4]}
-        for r in cur.fetchall()
-    ]
+    cur.execute("SELECT id, name, email, role, status, created_at FROM users")
+    rows = cur.fetchall()
     cur.close()
     conn.close()
+
+    try:
+        from database.redis import r as _redis
+        last_actives = {r_id: _redis.get(f"user:lastActive:{r_id}") for r_id, *_ in rows}
+    except Exception:
+        last_actives = {}
+
+    users = [
+        {
+            "id": r[0], "name": r[1], "email": r[2], "role": r[3], "status": r[4],
+            "created_at": r[5].isoformat() if r[5] else None,
+            "last_active": int(last_actives[r[0]]) if last_actives.get(r[0]) else None,
+        }
+        for r in rows
+    ]
     return users
 
 @router.post("/")
@@ -110,6 +138,10 @@ async def create_user(user: UserCreate, admin: dict = Depends(get_admin_user)):
 async def delete_user(user_id: int, admin: dict = Depends(get_admin_user)):
     conn = get_conn()
     cur = conn.cursor()
+    if user_id == get_primary_admin_id(cur):
+        cur.close()
+        conn.close()
+        raise HTTPException(status_code=400, detail="The primary admin cannot be deleted")
     cur.execute("DELETE FROM users WHERE id = %s RETURNING id", (user_id,))
     if not cur.fetchone():
         cur.close()
@@ -138,7 +170,16 @@ async def update_user(user_id: int, user: UserUpdate, admin: dict = Depends(get_
         cur.close()
         conn.close()
         raise HTTPException(status_code=400, detail="Email already in use")
-        
+
+    # The primary admin's role is immutable
+    if user_id == get_primary_admin_id(cur):
+        cur.execute("SELECT role FROM users WHERE id = %s", (user_id,))
+        current_role = cur.fetchone()[0]
+        if user.role.lower() != (current_role or "").lower():
+            cur.close()
+            conn.close()
+            raise HTTPException(status_code=400, detail="The primary admin's role cannot be changed")
+
     if user.password:
         hashed_password = pwd_context.hash(user.password)
         cur.execute(
