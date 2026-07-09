@@ -164,6 +164,14 @@ async def chat(req: ChatRequest, current_user: dict = Depends(get_current_user))
     if memory_context:
         final_system_prompt = f"{final_system_prompt}\n\n{memory_context}" if final_system_prompt else memory_context
 
+    # Custom function filters (inlet): let admin-authored code rewrite the
+    # query / system prompt before generation. Failures are swallowed inside.
+    try:
+        from routers.functions import apply_inlet
+        req.query, final_system_prompt = apply_inlet(req.query, final_system_prompt, current_user.get("id"))
+    except Exception as e:
+        print(f"[Functions] inlet skipped: {e}")
+
     # Use request's knowledge_id if provided, otherwise use the model's preset knowledge_id
     final_knowledge_id = req.knowledge_id if req.knowledge_id else preset_knowledge_id
     
@@ -350,6 +358,12 @@ Decision:"""
         result = await ask(req.query, req.top_k, resolved_model, final_knowledge_id, file_id=req.file_id, system_prompt=final_system_prompt, history=req.history, user_id=user_id)
         if web_sources and isinstance(result, dict):
             result["sources"] = web_sources + (result.get("sources") or [])
+        if isinstance(result, dict) and result.get("answer"):
+            try:
+                from routers.functions import apply_outlet
+                result["answer"] = apply_outlet(result["answer"], req.query, current_user.get("id"))
+            except Exception as e:
+                print(f"[Functions] outlet skipped: {e}")
         return result
     
     import httpx
@@ -364,9 +378,15 @@ Decision:"""
             prompt_with_history += f"\nQuestion:\n{req.query}"
             final_query = prompt_with_history
         res_data = await llm.generate(final_query, system_prompt=final_system_prompt)
+        answer = res_data.get("response", "")
+        try:
+            from routers.functions import apply_outlet
+            answer = apply_outlet(answer, req.query, current_user.get("id"))
+        except Exception as e:
+            print(f"[Functions] outlet skipped: {e}")
         return {
             "query": req.query,
-            "answer": res_data.get("response", ""),
+            "answer": answer,
             "stats": res_data.get("stats", {}),
             "sources": web_sources
         }

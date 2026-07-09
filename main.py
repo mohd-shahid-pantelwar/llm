@@ -1,6 +1,6 @@
 import os
 from fastapi import FastAPI
-from routers import chat, upload, ws_chat, health, models, auth, users, chats, folders, workspace, feedback, notes, admin, memories, openai_compat
+from routers import chat, upload, ws_chat, health, models, auth, users, chats, folders, workspace, feedback, notes, admin, memories, openai_compat, functions
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -37,6 +37,7 @@ app.include_router(notes.router)
 app.include_router(admin.router)
 app.include_router(memories.router)
 app.include_router(openai_compat.router)
+app.include_router(functions.router)
 
 ALLOWED_ORIGINS = [os.environ.get("FRONTEND_URL", "http://localhost:3000")]
 

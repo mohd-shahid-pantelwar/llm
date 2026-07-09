@@ -24,6 +24,26 @@ class PresetData(BaseModel):
     selectedTools: Optional[list] = None
     selectedSkills: Optional[list] = None
 
+@router.get("/embedding-models")
+def get_embedding_models(current_user: dict = Depends(get_admin_user)):
+    """Ollama models suitable for embeddings (the /models list excludes these
+    because it feeds the chat pickers). Falls back to nomic-embed-text."""
+    OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+    models = []
+    try:
+        res = requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
+        if res.status_code == 200:
+            for m in res.json().get("models", []):
+                name = m.get("name", "")
+                # embedding models by name, plus nomic/bge/mxbai/gte families
+                if any(tag in name.lower() for tag in ("embed", "nomic", "bge", "mxbai", "gte-", "minilm")):
+                    models.append({"id": name, "name": name})
+    except Exception as e:
+        print("Error fetching embedding models from Ollama:", e)
+    if not models:
+        models = [{"id": "nomic-embed-text", "name": "nomic-embed-text"}]
+    return models
+
 @router.get("/models")
 def get_models(current_user: dict = Depends(get_current_user)):
     mapped_models = []
